@@ -1,0 +1,24 @@
+# kabuステーションAPI 接続設定
+# APIパスワードは環境変数 KABU_API_PASSWORD から読み込みます（このファイルには書きません）。
+environment: demo   # "demo" (検証環境・ポート18081) または "production" (本番環境・ポート18080)
+
+# 監視銘柄（最大50銘柄。kabuステーションAPIのPUSH配信の上限）
+symbols:
+  - symbol: "258A"
+    exchange: 1   # 1 = 東証
+
+# シグナル判定パラメータ
+# 「小口」の定義: 直近PUSH間の当日累計出来高(TradingVolume)の差分を推定約定株数として扱う近似値。
+# README.mdの「重要な前提」を必ず読んでから調整すること。
+small_lot_threshold: 300      # この株数以下を「小口」とみなす
+price_tolerance_ticks: 0      # 最良買い気配との価格差の許容ティック数（0=完全一致のみ）
+
+# 連続ヒット回数ごとの通知段階
+alert_tiers:
+  - consecutive: 5
+    label: "WATCH"
+  - consecutive: 10
+    label: "STRONG"
+
+# デバッグ: 起動直後N件のPUSH生データをそのままログ出力する（フィールド名・値の目視確認用）
+debug_raw_messages: 20

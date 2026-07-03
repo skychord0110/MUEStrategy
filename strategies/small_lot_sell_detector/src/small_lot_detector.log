@@ -1,0 +1,41 @@
+2026-07-03 22:03:05,879 [ERROR] 環境変数 KABU_API_PASSWORD が設定されていません
+2026-07-03 22:03:31,063 [ERROR] 環境変数 KABU_API_PASSWORD が設定されていません
+2026-07-03 22:04:20,565 [ERROR] 環境変数 KABU_API_PASSWORD が設定されていません
+2026-07-03 22:07:39,109 [ERROR] 環境変数 KABU_API_PASSWORD が設定されていません
+2026-07-03 22:08:12,413 [ERROR] 環境変数 KABU_API_PASSWORD が設定されていません
+2026-07-03 22:09:21,999 [INFO] 認証に成功しました（環境: demo, ポート: 18081）
+2026-07-03 22:09:22,470 [INFO] 銘柄登録結果: {'RegistList': []}
+2026-07-03 22:09:22,485 [INFO] Websocket connected
+2026-07-03 22:09:22,485 [INFO] WebSocket接続確立。PUSH配信の受信を開始します。
+2026-07-03 22:10:02,521 [ERROR] WebSocketエラー: 
+2026-07-03 22:10:05,529 [WARNING] WebSocket切断 (code=None, msg=None)
+2026-07-03 22:10:05,529 [INFO] tearing down on exception 
+2026-07-03 22:10:05,530 [WARNING] WebSocketが切断されました。5秒後に再接続します。
+2026-07-03 22:11:03,579 [INFO] 認証に成功しました（環境: demo, ポート: 18081）
+2026-07-03 22:11:03,609 [INFO] 銘柄登録結果: {'RegistList': []}
+2026-07-03 22:11:03,612 [INFO] Websocket connected
+2026-07-03 22:11:03,612 [INFO] WebSocket接続確立。PUSH配信の受信を開始します。
+2026-07-03 22:14:53,703 [ERROR] WebSocketエラー: 
+2026-07-03 22:14:56,718 [WARNING] WebSocket切断 (code=None, msg=None)
+2026-07-03 22:14:56,719 [INFO] tearing down on exception 
+2026-07-03 22:14:56,719 [WARNING] WebSocketが切断されました。5秒後に再接続します。
+2026-07-03 22:15:01,721 [INFO] Websocket connected
+2026-07-03 22:15:01,721 [INFO] WebSocket接続確立。PUSH配信の受信を開始します。
+2026-07-03 22:15:11,736 [ERROR] WebSocketエラー: 
+2026-07-03 22:15:14,738 [WARNING] WebSocket切断 (code=None, msg=None)
+2026-07-03 22:15:14,742 [INFO] tearing down on exception 
+2026-07-03 22:15:14,743 [WARNING] WebSocketが切断されました。5秒後に再接続します。
+2026-07-03 22:15:19,746 [INFO] Websocket connected
+2026-07-03 22:15:19,747 [INFO] WebSocket接続確立。PUSH配信の受信を開始します。
+2026-07-03 22:15:29,748 [ERROR] WebSocketエラー: 
+2026-07-03 22:15:32,761 [WARNING] WebSocket切断 (code=None, msg=None)
+2026-07-03 22:15:32,761 [INFO] tearing down on exception 
+2026-07-03 22:15:32,761 [WARNING] WebSocketが切断されました。5秒後に再接続します。
+2026-07-03 22:37:47,143 [INFO] 認証に成功しました（環境: demo, ポート: 18081）
+2026-07-03 22:37:47,177 [INFO] 銘柄登録結果: {'RegistList': []}
+2026-07-03 22:37:47,183 [INFO] Websocket connected
+2026-07-03 22:37:47,183 [INFO] WebSocket接続確立。PUSH配信の受信を開始します。
+2026-07-03 22:38:37,203 [ERROR] WebSocketエラー: 
+2026-07-03 22:38:40,217 [WARNING] WebSocket切断 (code=None, msg=None)
+2026-07-03 22:38:40,218 [INFO] tearing down on exception 
+2026-07-03 22:38:40,218 [WARNING] WebSocketが切断されました。5秒後に再接続します。
