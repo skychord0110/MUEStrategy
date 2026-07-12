@@ -1,10 +1,10 @@
 # kabuステーションAPI 接続設定
 # APIパスワードは環境変数 KABU_API_PASSWORD から読み込みます（このファイルには書きません）。
-environment: demo   # "demo" (検証環境・ポート18081) または "production" (本番環境・ポート18080)
+environment: production   # "demo" (検証環境・ポート18081) または "production" (本番環境・ポート18080)
 
 # 監視銘柄（最大50銘柄。kabuステーションAPIのPUSH配信の上限）
 symbols:
-  - symbol: "258A"
+  - symbol: "285A"
     exchange: 1   # 1 = 東証
 
 # シグナル判定パラメータ

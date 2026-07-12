@@ -1,0 +1,41 @@
+# kabuステーションAPI 接続設定
+# APIパスワードは環境変数 KABU_API_PASSWORD から読み込みます（このファイルには書きません）。
+# "production" (本番環境・ポート18080) または "demo" (検証環境・ポート18081)
+# 注意: 検証環境は発注テスト専用で、銘柄登録は空が返りPUSH配信も流れない。
+# 市場データの受信（本ツールの用途）は production を使うこと。発注機能はないため資金は動かない。
+environment: production
+
+# 監視銘柄（最大50銘柄。kabuステーションAPIのPUSH配信の上限）
+symbols:
+  - symbol: "285A"
+    exchange: 1   # 1 = 東証
+
+# ── OVER急減イベントの検知条件 ──
+# OVERの規模による条件分岐:
+#   直前のOverSellQty <= large_over_threshold の銘柄 → over_drop_threshold（絶対株数）で判定
+#   直前のOverSellQty >  large_over_threshold の銘柄 → 直前のOVERの large_over_drop_pct 以上の減少で判定
+over_drop_threshold: 3000      # OVERが小さい銘柄向け: この株数以上の減少でイベント
+large_over_threshold: 100000   # この株数を超えるOVERを持つ銘柄は割合判定に切り替え
+large_over_drop_pct: 0.10      # OVER大銘柄向け: 直前のOVERの10%以上の減少でイベント
+
+# 「価格が下落しながら」の判定: 現在値が当日安値からこの割合以内（安値圏）にあること
+low_zone_pct: 0.007   # 0.7%
+
+# ── 「ほぼ同数の売りが降りてきた」の突き合わせ条件 ──
+# 減少量に対する許容誤差（0.2 = 減少量の80%以上が現れたら「ほぼ同数」とみなす）
+match_tolerance: 0.2
+
+# OVER減少から売り直し／ぶつけの出現を監視する時間窓（秒）
+match_window_seconds: 30
+
+# 「売り気配周辺」とみなす板の本数（最良売り気配から数えてN本以内への数量上乗せを売り直しと判定）
+requote_levels: 3
+
+# 売り直し検知後、減少量のこの割合が買われたら「吸収（ABSORBED）」を通知
+requote_consumed_fraction: 0.5
+
+# 約定の売買方向分類における最良気配との価格差の許容ティック数（0=完全一致のみ）
+price_tolerance_ticks: 0
+
+# デバッグ: 起動直後N件のPUSH生データをそのままログ出力する（フィールド名・値の目視確認用）
+debug_raw_messages: 20

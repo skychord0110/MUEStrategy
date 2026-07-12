@@ -1,6 +1,9 @@
 # kabuステーションAPI 接続設定
 # APIパスワードは環境変数 KABU_API_PASSWORD から読み込みます（このファイルには書きません）。
-environment: demo   # "demo" (検証環境・ポート18081) または "production" (本番環境・ポート18080)
+# "production" (本番環境・ポート18080) または "demo" (検証環境・ポート18081)
+# 注意: 検証環境は発注テスト専用で、銘柄登録は空が返りPUSH配信も流れない。
+# 市場データの受信（本ツールの用途）は production を使うこと。発注機能はないため資金は動かない。
+environment: production
 
 # 監視銘柄（最大50銘柄。kabuステーションAPIのPUSH配信の上限）
 symbols:

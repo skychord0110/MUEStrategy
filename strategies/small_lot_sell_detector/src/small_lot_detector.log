@@ -39,3 +39,42 @@
 2026-07-03 22:38:40,217 [WARNING] WebSocket切断 (code=None, msg=None)
 2026-07-03 22:38:40,218 [INFO] tearing down on exception 
 2026-07-03 22:38:40,218 [WARNING] WebSocketが切断されました。5秒後に再接続します。
+2026-07-07 12:15:16,867 [INFO] 認証に成功しました（環境: demo, ポート: 18081）
+2026-07-07 12:15:16,938 [INFO] 銘柄登録結果: {'RegistList': []}
+2026-07-07 12:15:16,943 [INFO] Websocket connected
+2026-07-07 12:15:16,943 [INFO] WebSocket接続確立。PUSH配信の受信を開始します。
+2026-07-07 12:15:56,970 [ERROR] WebSocketエラー: 
+2026-07-07 12:15:59,976 [WARNING] WebSocket切断 (code=None, msg=None)
+2026-07-07 12:15:59,976 [INFO] tearing down on exception 
+2026-07-07 12:15:59,976 [WARNING] WebSocketが切断されました。5秒後に再接続します。
+2026-07-07 12:42:43,595 [INFO] 認証に成功しました（環境: demo, ポート: 18081）
+2026-07-07 12:42:43,621 [INFO] 銘柄登録結果: {'RegistList': []}
+2026-07-07 12:42:43,630 [INFO] Websocket connected
+2026-07-07 12:42:43,632 [INFO] WebSocket接続確立。PUSH配信の受信を開始します。
+2026-07-07 12:43:53,671 [ERROR] WebSocketエラー: 
+2026-07-07 12:43:56,689 [WARNING] WebSocket切断 (code=None, msg=None)
+2026-07-07 12:43:56,689 [INFO] tearing down on exception 
+2026-07-07 12:43:56,690 [WARNING] WebSocketが切断されました。5秒後に再接続します。
+2026-07-07 12:45:28,062 [INFO] 認証に成功しました（環境: demo, ポート: 18081）
+2026-07-07 12:45:28,120 [INFO] 銘柄登録結果: {'RegistList': []}
+2026-07-07 12:45:28,125 [INFO] Websocket connected
+2026-07-07 12:45:28,126 [INFO] WebSocket接続確立。PUSH配信の受信を開始します。
+2026-07-07 12:50:58,219 [ERROR] WebSocketエラー: 
+2026-07-07 12:51:01,254 [WARNING] WebSocket切断 (code=None, msg=None)
+2026-07-07 12:51:01,255 [INFO] tearing down on exception 
+2026-07-07 12:51:01,257 [WARNING] WebSocketが切断されました。5秒後に再接続します。
+2026-07-07 12:51:06,271 [INFO] Websocket connected
+2026-07-07 12:51:06,271 [INFO] WebSocket接続確立。PUSH配信の受信を開始します。
+2026-07-07 12:51:16,285 [ERROR] WebSocketエラー: 
+2026-07-07 12:51:19,289 [WARNING] WebSocket切断 (code=None, msg=None)
+2026-07-07 12:51:19,290 [INFO] tearing down on exception 
+2026-07-07 12:51:19,290 [WARNING] WebSocketが切断されました。5秒後に再接続します。
+2026-07-07 20:30:19,694 [INFO] 認証に成功しました（環境: production, ポート: 18080）
+2026-07-07 20:30:19,921 [INFO] 銘柄登録結果: {'RegistList': [{'Symbol': '285A', 'Exchange': 1}]}
+2026-07-07 20:30:19,935 [INFO] Websocket connected
+2026-07-07 20:30:19,935 [INFO] WebSocket接続確立。PUSH配信の受信を開始します。
+2026-07-07 20:30:28,593 [INFO] [DEBUG RAW] {'OverSellQty': 2007700.0, 'UnderBuyQty': 979000.0, 'TotalMarketValue': 39620367715200.0, 'MarketOrderSellQty': 0.0, 'MarketOrderBuyQty': 0.0, 'BidTime': '2026-07-07T15:30:00+09:00', 'AskTime': '2026-07-07T15:30:00+09:00', 'Exchange': 1, 'ExchangeName': '東証プ', 'TradingVolume': 46495000.0, 'TradingVolumeTime': '2026-07-07T15:30:00+09:00', 'VWAP': 73970.627, 'TradingValue': 3439264304000.0, 'BidQty': 100.0, 'BidPrice': 72430.0, 'BidSign': '0101', 'Sell1': {'Price': 72430.0, 'Qty': 100.0, 'Sign': '0101', 'Time': '2026-07-07T15:30:00+09:00'}, 'Sell2': {'Price': 72450.0, 'Qty': 500.0}, 'Sell3': {'Price': 72470.0, 'Qty': 200.0}, 'Sell4': {'Price': 72480.0, 'Qty': 200.0}, 'Sell5': {'Price': 72490.0, 'Qty': 200.0}, 'Sell6': {'Price': 72500.0, 'Qty': 12100.0}, 'Sell7': {'Price': 72510.0, 'Qty': 100.0}, 'Sell8': {'Price': 72520.0, 'Qty': 200.0}, 'Sell9': {'Price': 72540.0, 'Qty': 400.0}, 'Sell10': {'Price': 72550.0, 'Qty': 100.0}, 'AskQty': 1600.0, 'AskPrice': 72400.0, 'AskSign': '0101', 'Buy1': {'Price': 72400.0, 'Qty': 1600.0, 'Sign': '0101', 'Time': '2026-07-07T15:30:00+09:00'}, 'Buy2': {'Price': 72390.0, 'Qty': 8900.0}, 'Buy3': {'Price': 72380.0, 'Qty': 1800.0}, 'Buy4': {'Price': 72370.0, 'Qty': 1500.0}, 'Buy5': {'Price': 72360.0, 'Qty': 800.0}, 'Buy6': {'Price': 72350.0, 'Qty': 2900.0}, 'Buy7': {'Price': 72340.0, 'Qty': 800.0}, 'Buy8': {'Price': 72330.0, 'Qty': 900.0}, 'Buy9': {'Price': 72320.0, 'Qty': 1400.0}, 'Buy10': {'Price': 72310.0, 'Qty': 1700.0}, 'Symbol': '285A', 'SymbolName': 'キオクシアホールディングス', 'CurrentPrice': 72400.0, 'CurrentPriceTime': '2026-07-07T15:30:00+09:00', 'CurrentPriceChangeStatus': '0061', 'CurrentPriceStatus': 1, 'CalcPrice': 72400.0, 'PreviousClose': 81590.0, 'PreviousCloseTime': '2026-07-06T00:00:00+09:00', 'ChangePreviousClose': -9190.0, 'ChangePreviousClosePer': -11.26, 'OpeningPrice': 78000.0, 'OpeningPriceTime': '2026-07-07T09:06:00+09:00', 'HighPrice': 79470.0, 'HighPriceTime': '2026-07-07T09:08:03+09:00', 'LowPrice': 71120.0, 'LowPriceTime': '2026-07-07T14:11:27+09:00', 'SecurityType': 1}
+2026-07-07 20:32:48,656 [ERROR] WebSocketエラー: 
+2026-07-07 20:32:51,662 [WARNING] WebSocket切断 (code=None, msg=None)
+2026-07-07 20:32:51,663 [INFO] tearing down on exception 
+2026-07-07 20:32:51,664 [WARNING] WebSocketが切断されました。5秒後に再接続します。

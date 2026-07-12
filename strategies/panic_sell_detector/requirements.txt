@@ -1,0 +1,4 @@
+requests>=2.31
+websocket-client>=1.7
+PyYAML>=6.0
+plyer>=2.1
