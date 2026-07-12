@@ -59,7 +59,7 @@ python main.py --config ../config.yaml
 ```
 
 前提: kabuステーション（デスクトップアプリ）が起動・ログイン済みで、API設定が有効なこと。
-ログはコンソールと `src\under_surge_detector.log` に出力される。
+ログはコンソールと `logs\under_surge_YYYY-MM-DD.log`（日付別・ディレクトリ自動作成）に出力される。
 
 ## パラメータ一覧（config.yaml）
 

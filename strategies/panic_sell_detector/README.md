@@ -81,7 +81,7 @@ python main.py --config ../config.yaml
 ```
 
 前提: kabuステーション（デスクトップアプリ）が起動・ログイン済みで、API設定が有効なこと。
-ログはコンソールと `src\panic_sell_detector.log` に出力される。
+ログはコンソールと `logs\panic_sell_YYYY-MM-DD.log`（日付別・ディレクトリ自動作成）に出力される。
 
 ## パラメータ一覧（config.yaml）
 
