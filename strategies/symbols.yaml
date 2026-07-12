@@ -1,0 +1,186 @@
+# 全ストラテジー共通の監視銘柄リスト
+# ここを編集すれば、全ストラテジー（small_lot_sell_detector / panic_sell_detector /
+# under_surge_detector / 今後追加するもの）に反映される。
+#
+# 注意:
+#   - kabuステーションAPIのPUSH配信の銘柄登録上限は50銘柄（アプリ全体で共有）。
+#   - 各ストラテジーは起動時に「全登録解除→このリストを登録」するため、
+#     並走させる場合も全ストラテジーがこの同一リストを参照していれば競合しない。
+symbols:
+  - symbol: "4165"
+    exchange: 1   # 1 = 東証
+  - symbol: "4395"
+    exchange: 1   # 1 = 東証
+  - symbol: "4446"
+    exchange: 1   # 1 = 東証
+  - symbol: "6620"
+    exchange: 1   # 1 = 東証
+  - symbol: "9229"
+    exchange: 1   # 1 = 東証
+  - symbol: "4813"
+    exchange: 1   # 1 = 東証
+  - symbol: "7602"
+    exchange: 1   # 1 = 東証
+  - symbol: "8798"
+    exchange: 1   # 1 = 東証
+  - symbol: "4575"
+    exchange: 1   # 1 = 東証
+  - symbol: "7352"
+    exchange: 1   # 1 = 東証
+  - symbol: "2321"
+    exchange: 1   # 1 = 東証
+  - symbol: "5132"
+    exchange: 1   # 1 = 東証
+  - symbol: "5129"
+    exchange: 1   # 1 = 東証
+  - symbol: "3692"
+    exchange: 1   # 1 = 東証
+  - symbol: "5137"
+    exchange: 1   # 1 = 東証
+  - symbol: "3323"
+    exchange: 1   # 1 = 東証
+  - symbol: "3963"
+    exchange: 1   # 1 = 東証
+  - symbol: "5817"
+    exchange: 1   # 1 = 東証
+  - symbol: "4894"
+    exchange: 1   # 1 = 東証
+  - symbol: "3747"
+    exchange: 1   # 1 = 東証
+  - symbol: "9130"
+    exchange: 1   # 1 = 東証
+  - symbol: "5724"
+    exchange: 1   # 1 = 東証
+  - symbol: "5892"
+    exchange: 1   # 1 = 東証
+  - symbol: "7018"
+    exchange: 1   # 1 = 東証
+  - symbol: "4418"
+    exchange: 1   # 1 = 東証
+  - symbol: "6228"
+    exchange: 1   # 1 = 東証
+  - symbol: "4176"
+    exchange: 1   # 1 = 東証
+  - symbol: "5707"
+    exchange: 1   # 1 = 東証
+  - symbol: "9145"
+    exchange: 1   # 1 = 東証
+  - symbol: "2330"
+    exchange: 1   # 1 = 東証
+  - symbol: "3653"
+    exchange: 1   # 1 = 東証
+  - symbol: "5597"
+    exchange: 1   # 1 = 東証
+  - symbol: "5031"
+    exchange: 1   # 1 = 東証
+  - symbol: "4412"
+    exchange: 1   # 1 = 東証
+  - symbol: "2998"
+    exchange: 1   # 1 = 東証
+  - symbol: "9327"
+    exchange: 1   # 1 = 東証
+  - symbol: "4840"
+    exchange: 1   # 1 = 東証
+  - symbol: "4075"
+    exchange: 1   # 1 = 東証
+  - symbol: "3686"
+    exchange: 1   # 1 = 東証
+  - symbol: "6495"
+    exchange: 1   # 1 = 東証
+  - symbol: "5588"
+    exchange: 1   # 1 = 東証
+  - symbol: "3807"
+    exchange: 1   # 1 = 東証
+  - symbol: "4570"
+    exchange: 1   # 1 = 東証
+  - symbol: "5599"
+    exchange: 1   # 1 = 東証
+  - symbol: "4488"
+    exchange: 1   # 1 = 東証
+  - symbol: "5591"
+    exchange: 1   # 1 = 東証
+  - symbol: "9115"
+    exchange: 1   # 1 = 東証
+  - symbol: "4011"
+    exchange: 1   # 1 = 東証
+  - symbol: "7071"
+    exchange: 1   # 1 = 東証
+  - symbol: "4056"
+    exchange: 1   # 1 = 東証
+# --- 51銘柄目以降（登録上限50のため未登録。入れ替える場合は上と差し替える） ---
+#  - symbol: "4579"
+#    exchange: 1
+#  - symbol: "5729"
+#    exchange: 1
+#  - symbol: "5026"
+#    exchange: 1
+#  - symbol: "2440"
+#    exchange: 1
+#  - symbol: "5029"
+#    exchange: 1
+#  - symbol: "8518"
+#    exchange: 1
+#  - symbol: "3134"
+#    exchange: 1
+#  - symbol: "4393"
+#    exchange: 1
+#  - symbol: "7115"
+#    exchange: 1
+#  - symbol: "4880"
+#    exchange: 1
+#  - symbol: "5535"
+#    exchange: 1
+#  - symbol: "9235"
+#    exchange: 1
+#  - symbol: "5994"
+#    exchange: 1
+#  - symbol: "1844"
+#    exchange: 1
+#  - symbol: "2901"
+#    exchange: 1
+#  - symbol: "6030"
+#    exchange: 1
+#  - symbol: "4013"
+#    exchange: 1
+#  - symbol: "2216"
+#    exchange: 1
+#  - symbol: "2700"
+#    exchange: 1
+#  - symbol: "4576"
+#    exchange: 1
+#  - symbol: "9556"
+#    exchange: 1
+#  - symbol: "8165"
+#    exchange: 1
+#  - symbol: "9337"
+#    exchange: 1
+#  - symbol: "9211"
+#    exchange: 1
+#  - symbol: "2195"
+#    exchange: 1
+#  - symbol: "3726"
+#    exchange: 1
+#  - symbol: "7273"
+#    exchange: 1
+#  - symbol: "7034"
+#    exchange: 1
+#  - symbol: "7111"
+#    exchange: 1
+#  - symbol: "6580"
+#    exchange: 1
+#  - symbol: "7061"
+#    exchange: 1
+#  - symbol: "2342"
+#    exchange: 1
+#  - symbol: "7373"
+#    exchange: 1
+#  - symbol: "6557"
+#    exchange: 1
+#  - symbol: "4019"
+#    exchange: 1
+#  - symbol: "9168"
+#    exchange: 1
+#  - symbol: "7351"
+#    exchange: 1
+#  - symbol: "7095"
+#    exchange: 1

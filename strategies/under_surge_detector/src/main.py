@@ -28,6 +28,27 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def load_symbols(config: dict, config_path: str) -> list:
+    """監視銘柄リストを取得する。
+
+    config内の symbols: を優先（単一銘柄でのテスト用）。
+    なければ symbols_file: の指す共通ファイル（configからの相対パス）を読む。
+    """
+    if config.get("symbols"):
+        return config["symbols"]
+    symbols_file = config.get("symbols_file")
+    if not symbols_file:
+        raise ValueError("config に symbols または symbols_file を指定してください")
+    base = os.path.dirname(os.path.abspath(config_path))
+    path = os.path.normpath(os.path.join(base, symbols_file))
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    symbols = (data or {}).get("symbols")
+    if not symbols:
+        raise ValueError(f"銘柄リストファイルに symbols がありません: {path}")
+    return symbols
+
+
 def main():
     parser = argparse.ArgumentParser(description="UNDER急増（下値への大口買い出現）検知ストラテジー")
     parser.add_argument("--config", default="../config.yaml")
@@ -46,8 +67,11 @@ def main():
     client.authenticate()
     log.info("認証に成功しました（環境: %s, ポート: %s）", client.environment, client.port)
 
+    symbols = load_symbols(config, args.config)
+    log.info("監視銘柄: %d銘柄（%s から読み込み）", len(symbols),
+             "config直接指定" if config.get("symbols") else config.get("symbols_file"))
     client.unregister_all()
-    reg_result = client.register_symbols(config["symbols"])
+    reg_result = client.register_symbols(symbols)
     log.info("銘柄登録結果: %s", reg_result)
 
     # 板寄せ直後の通知抑制時間帯（config形式: ["09:00-09:01", "12:30-12:31"]）

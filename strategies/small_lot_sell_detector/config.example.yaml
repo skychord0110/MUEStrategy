@@ -5,10 +5,10 @@
 # 市場データの受信（本ツールの用途）は production を使うこと。発注機能はないため資金は動かない。
 environment: production
 
-# 監視銘柄（最大50銘柄。kabuステーションAPIのPUSH配信の上限）
-symbols:
-  - symbol: "7203"
-    exchange: 1   # 1 = 東証
+# 監視銘柄は全ストラテジー共通の外部ファイルで管理する（このconfigからの相対パス）。
+# 銘柄の追加・入れ替えは ../symbols.yaml を編集する（全ストラテジーに一括反映）。
+# このファイルに symbols: を直接書いた場合はそちらが優先される（単一銘柄でのテスト用）。
+symbols_file: ../symbols.yaml
 
 # シグナル判定パラメータ
 # 「小口」の定義: 直近PUSH間の当日累計出来高(TradingVolume)の差分を推定約定株数として扱う近似値。

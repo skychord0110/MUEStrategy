@@ -50,7 +50,8 @@ OVER不変条件（条件3）は、売り買い両方が同時に動く「板全
 cd strategies\under_surge_detector
 pip install -r requirements.txt
 copy config.example.yaml config.yaml
-# config.yaml の銘柄・閾値を編集
+# 監視銘柄は全ストラテジー共通の ../symbols.yaml で管理（そちらを編集）
+# config.yaml では閾値等のパラメータを編集
 
 $env:KABU_API_PASSWORD = "本番用APIパスワード"
 cd src

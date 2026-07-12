@@ -72,7 +72,9 @@ PUSH配信も一切流れてきません（実挙動で確認済み）。
    pip install -r requirements.txt
    ```
 
-4. `config.example.yaml` を `config.yaml` にコピーし、監視銘柄・閾値を編集する。
+4. `config.example.yaml` を `config.yaml` にコピーし、閾値を編集する。
+   監視銘柄は全ストラテジー共通の `../symbols.yaml` で管理する（そちらを編集。
+   config.yaml に `symbols:` を直接書いた場合はそちらが優先＝単一銘柄テスト用）。
 
 ## 実行
 
