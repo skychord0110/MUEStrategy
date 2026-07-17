@@ -45,7 +45,12 @@ STRATEGY_LABELS = {
     "small_lot_sell_detector": "小口売り連続",
     "panic_sell_detector": "投げ売り",
     "under_surge_detector": "UNDER急増",
+    "afternoon_reversal": "AI午後引け戻り",
+    "confluence": "AI複合シグナル",
 }
+
+# AIストラテジー（仮想売買）のストラテジー名
+AI_PAPER_STRATEGIES = ("afternoon_reversal", "confluence")
 
 PANIC_STAGE_LABELS = {
     "ABSORBED": "投げ売り吸収",
@@ -93,6 +98,21 @@ def build_message(strategy: str, alert: dict):
             f"(+{int(alert['under_delta'])}株, +{alert['increase_pct']:.1f}%)。OVERはほぼ不変。"
             f"下値に大口買いが入った可能性（現在値{alert['price']}円・安値圏）"
         )
+    elif strategy in AI_PAPER_STRATEGIES:
+        if alert["type"] == "ENTRY":
+            title = f"[{label}/エントリー] {alert['symbol']}"
+            trigger = "+".join(STRATEGY_LABELS.get(t, t) for t in alert["trigger"].split("+"))
+            body = (
+                f"{alert['symbol']}: {trigger} を検知、{alert['price']}円で仮想買い"
+                f"（損切り-{alert['stop_loss_pct']:.1f}%/利確+{alert['take_profit_pct']:.1f}%"
+                f"/残りは大引け・発注なし）"
+            )
+        else:  # EXIT
+            title = f"[{label}/決済:{alert['reason']}] {alert['symbol']}"
+            body = (
+                f"{alert['symbol']}: 仮想決済 {alert['entry_price']}円→{alert['exit_price']}円 "
+                f"({alert['return_pct']:+.2f}%)"
+            )
     else:
         title = f"[{label}] {alert.get('symbol', '?')}"
         body = str(alert)

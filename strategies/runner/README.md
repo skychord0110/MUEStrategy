@@ -1,6 +1,7 @@
 # runner — 統合ランナー（全ストラテジーを1コマンドで実行）
 
-全ストラテジー（small_lot_sell_detector / panic_sell_detector / under_surge_detector）を
+全ストラテジー（small_lot_sell_detector / panic_sell_detector / under_surge_detector、
+およびそれらの検知結果を入力とするAIストラテジー AIStrategys/afternoon_reversal・confluence）を
 **1プロセス・1WebSocket接続**でまとめて実行する。kabuステーションへの認証・銘柄登録は
 1回だけ行い、受信した各PUSHメッセージを有効化された全検知エンジンに配る。
 検知・通知のみで**発注は行わない**。
@@ -63,6 +64,10 @@ runner/logs/
 - `[小口売り連続/WATCH] 4165` / `[小口売り連続/STRONG] 4165`
 - `[投げ売り/買い気配へぶつけ] 4165` / `[投げ売り/投げ売り吸収] 4165`
 - `[UNDER急増] 4165`
+- `[AI午後引け戻り/エントリー] 4165` / `[AI午後引け戻り/決済:利確] 4165`（仮想売買・発注なし）
+- `[AI複合シグナル/エントリー] 4165` / `[AI複合シグナル/決済:大引け] 4165`（仮想売買・発注なし）
+
+AIストラテジー（仮想売買）の詳細は [../AIStrategys/README.md](../AIStrategys/README.md) を参照。
 
 ## 仕組み（新ストラテジー追加時の参考）
 

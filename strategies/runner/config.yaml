@@ -51,3 +51,23 @@ strategies:
     quiet_windows:                  # 板寄せ直後の通知抑制時間帯
       - "09:00-09:01"
       - "12:30-12:31"
+
+  # ── AIストラテジー（仮想売買・発注なし。詳細: ../AIStrategys/README.md） ──
+  # 2026-07-13〜17のログ分析（analysis/）に基づく買い戦略のフォワード検証用。
+
+  # 午後の下値大口買い検知・引け戻り（13時以降のUNDER急増で仮想買い→SL/TP/大引け）
+  afternoon_reversal:
+    enabled: true
+    entry_start: "13:00"   # 仮想エントリーを許可する開始時刻
+    entry_end: "15:00"     # これ以降は新規エントリーしない
+    stop_loss_pct: 2.0     # 損切り幅（%）
+    take_profit_pct: 2.0   # 利確幅（%）
+
+  # 複合シグナル（午後に30分以内でUNDER急増と小口売り連続が両方点灯→仮想買い）
+  confluence:
+    enabled: true
+    window_seconds: 1800   # UNDER急増と小口売り連続がこの秒数以内に両方揃ったら発火
+    entry_start: "13:00"
+    entry_end: "15:00"
+    stop_loss_pct: 1.0
+    take_profit_pct: 1.0

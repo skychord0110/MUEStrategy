@@ -72,6 +72,11 @@ def parse_quiet_windows(windows: list) -> list:
     return result
 
 
+def parse_time(s: str) -> dtime:
+    h, m = map(int, s.split(":"))
+    return dtime(h, m)
+
+
 class RunnerEngine:
     """PUSHメッセージを有効な全detectorに配るディスパッチャ。"""
 
@@ -115,6 +120,29 @@ class RunnerEngine:
                 cooldown_seconds=us.get("cooldown_seconds", 60),
                 quiet_windows=quiet,
             )
+
+        # AIストラテジー（strategies/AIStrategys/）: 基礎ストラテジーの検知アラートを
+        # 入力にした仮想売買。発注はしない。詳細は ../../AIStrategys/README.md
+        self.ai_strategies = {}
+        ar = strategies_cfg.get("afternoon_reversal", {})
+        cf = strategies_cfg.get("confluence", {})
+        if ar.get("enabled") or cf.get("enabled"):
+            ai_mod = load_detector_module("AIStrategys")
+            if ar.get("enabled"):
+                self.ai_strategies["afternoon_reversal"] = ai_mod.AfternoonReversalStrategy(
+                    entry_start=parse_time(ar.get("entry_start", "13:00")),
+                    entry_end=parse_time(ar.get("entry_end", "15:00")),
+                    stop_loss_pct=ar.get("stop_loss_pct", 2.0),
+                    take_profit_pct=ar.get("take_profit_pct", 2.0),
+                )
+            if cf.get("enabled"):
+                self.ai_strategies["confluence"] = ai_mod.ConfluenceStrategy(
+                    window_seconds=cf.get("window_seconds", 1800),
+                    entry_start=parse_time(cf.get("entry_start", "13:00")),
+                    entry_end=parse_time(cf.get("entry_end", "15:00")),
+                    stop_loss_pct=cf.get("stop_loss_pct", 1.0),
+                    take_profit_pct=cf.get("take_profit_pct", 1.0),
+                )
 
     def handle(self, data: dict, now=None) -> list:
         """1件のPUSHメッセージを処理し、[(ストラテジー名, alert), ...] を返す。"""
@@ -169,6 +197,19 @@ class RunnerEngine:
             ):
                 results.append(("under_surge_detector", alert))
 
+        # AIストラテジー: 先に現在値更新で仮想建玉の決済判定を行い（エントリー直後の
+        # 同一メッセージで即決済しないよう順序を固定）、その後に基礎ストラテジーの
+        # 検知アラートをエントリー判定に配る
+        if self.ai_strategies:
+            base_results = list(results)
+            for name, strat in self.ai_strategies.items():
+                for alert in strat.on_price(symbol, current_price, now):
+                    results.append((name, alert))
+            for base_name, base_alert in base_results:
+                for name, strat in self.ai_strategies.items():
+                    for alert in strat.on_signal(base_name, base_alert, now):
+                        results.append((name, alert))
+
         return results
 
 
@@ -190,7 +231,8 @@ def main():
     if not engine.detectors:
         log.error("有効なストラテジーがありません。config.yamlのstrategiesでenabled: trueを設定してください")
         sys.exit(1)
-    log.info("有効ストラテジー: %s", ", ".join(engine.detectors.keys()))
+    log.info("有効ストラテジー: %s",
+             ", ".join(list(engine.detectors.keys()) + list(engine.ai_strategies.keys())))
 
     client = KabuClient(environment=config["environment"], api_password=api_password)
     client.authenticate()
