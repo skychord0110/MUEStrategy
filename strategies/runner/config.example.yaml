@@ -62,6 +62,8 @@ strategies:
     entry_end: "15:00"     # これ以降は新規エントリーしない
     stop_loss_pct: 2.0     # 損切り幅（%）
     take_profit_pct: 2.0   # 利確幅（%）
+    min_entry_price: 500.0 # この価格未満の銘柄はエントリーしない（低位株はノイズが大きく
+                           # 勝率が落ちるため。0でフィルタ無効。詳細: ../AIStrategys/README.md）
 
   # 複合シグナル（午後に30分以内でUNDER急増と小口売り連続が両方点灯→仮想買い）
   confluence:

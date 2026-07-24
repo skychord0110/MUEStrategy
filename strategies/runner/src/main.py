@@ -134,6 +134,7 @@ class RunnerEngine:
                     entry_end=parse_time(ar.get("entry_end", "15:00")),
                     stop_loss_pct=ar.get("stop_loss_pct", 2.0),
                     take_profit_pct=ar.get("take_profit_pct", 2.0),
+                    min_entry_price=ar.get("min_entry_price", 500.0),
                 )
             if cf.get("enabled"):
                 self.ai_strategies["confluence"] = ai_mod.ConfluenceStrategy(
@@ -168,15 +169,17 @@ class RunnerEngine:
             level = data.get(f"Sell{i}") or {}
             sell_levels.append((level.get("Price"), level.get("Qty")))
 
+        # 約定時刻の近似: 出来高更新時刻 → 現在値更新時刻 → 受信時刻 の順で採用。
+        time_str = data.get("TradingVolumeTime") or data.get("CurrentPriceTime")
+        trade_time = now
+        if time_str:
+            try:
+                trade_time = datetime.fromisoformat(time_str)
+            except ValueError:
+                pass
+
         d = self.detectors.get("small_lot_sell_detector")
         if d is not None and trading_volume is not None:
-            time_str = data.get("TradingVolumeTime") or data.get("CurrentPriceTime")
-            trade_time = now
-            if time_str:
-                try:
-                    trade_time = datetime.fromisoformat(time_str)
-                except ValueError:
-                    pass
             for alert in d.update(symbol, current_price, trading_volume, buy1_price, trade_time):
                 results.append(("small_lot_sell_detector", alert))
 

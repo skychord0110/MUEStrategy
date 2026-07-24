@@ -1,0 +1,37 @@
+# マーケットスピードII RSS（歩み値）による定期買い集め検知の設定例。
+# このファイルをコピーして config.yaml を作成する。APIパスワード等は不要
+# （マーケットスピードII本体・Excelアドイン側でログイン済みであることが前提）。
+
+# 監視銘柄は全ストラテジー共通の外部ファイルを使う（このconfigからの相対パス）。
+# config に symbols: を直接書けばそちらが優先される（単一銘柄テスト用）。
+symbols_file: ../symbols.yaml
+
+# ── RSS（Excel連携）の設定 ──
+rss:
+  market_suffix: "T"        # RssTickListに渡す市場記号（東証="T"）
+  tick_count: 300           # 1銘柄あたり取得する歩み値の本数（1〜300）
+  sheet_name: "TICKS"       # 数式を書き込むワークシート名（自動作成）
+  anchor_row: 1             # 各銘柄ブロックの先頭行
+  cols_per_symbol: 4        # 銘柄ブロックの列間隔（時刻・出来高・約定値の3列＋余白1）
+  newest_first: true        # RssTickListが新しい順に並ぶ場合true（読取後に古い順へ正規化）
+  poll_interval_seconds: 1.0 # ポーリング間隔（秒）
+  warmup_seconds: 5         # 数式書き込み後、初回反映を待つ秒数
+  workbook_name: null       # 対象ブック名。null=アクティブブック
+  com_retries: 60           # ExcelがCOM呼び出しを拒否した際の再試行回数
+  com_retry_delay: 0.25     # 再試行の間隔（秒）。60回×0.25秒=最大約15秒待つ
+
+# ── 検知条件（kabu版 periodic_buy_detector と同じ考え方） ──
+detector:
+  delay_seconds: 10.0             # トリガー約定から買いまでの狙うラグ（秒）
+  delay_tolerance_seconds: 1.0    # ラグの許容誤差（±秒）。歩み値は秒精度なので1.0前後を推奨
+  trigger_side: "sell"            # トリガー約定の向き: "sell"（既定・売りが多い）/ "buy" / "any"
+  min_lot: 0                      # この株数未満の買いは無視（ノイズ除去。0で無効）
+  min_occurrence_gap_seconds: 2.0 # この秒数以内の連続ヒットは二重カウントしない
+  alert_tiers:                    # 「N秒後の買い」が当日この回数に達したら通知
+    - occurrences: 5
+      label: "WATCH"
+    - occurrences: 10
+      label: "STRONG"
+
+# デバッグ: 起動直後N回ぶん、読み取った歩み値バッチの直近3件をログ出力する
+debug_raw_batches: 10
