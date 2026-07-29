@@ -120,6 +120,17 @@ def build_message(strategy: str, alert: dict):
     return title, body
 
 
+def notify_message(title: str, body: str):
+    """組み立て済みのタイトル・本文をそのまま通知する（外部ツール連携用）。"""
+    logger.info("%s %s", title, body)
+    if _plyer_notification is None:
+        return
+    try:
+        _plyer_notification.notify(title=title, message=body, timeout=10)
+    except Exception:
+        logger.exception("ポップアップ通知の送信に失敗しました")
+
+
 def notify(strategy: str, alert: dict):
     title, body = build_message(strategy, alert)
     logger.info("%s %s", title, body)

@@ -1,0 +1,32 @@
+# EDINET大量保有報告書モニタの設定例。コピーして config.yaml を作成する。
+# APIキーは環境変数 EDINET_API_KEY から読み込む（このファイルには書かない）。
+
+# 監視銘柄は全ストラテジー共通の外部ファイルを使う（このconfigからの相対パス）。
+# config に symbols: を直接書けばそちらが優先される。
+symbols_file: ../symbols.yaml
+
+# ── EDINET API ──
+edinet:
+  lookback_days: 7          # 初回/明示指定がない場合に遡ってチェックする日数
+  request_interval: 0.5     # API呼び出しの間隔（秒）。負荷をかけすぎない
+  doc_type_codes: ["350", "360"]      # 大量保有報告書系の書類種別コード
+  keywords: ["大量保有", "変更報告書"]  # 書類名でも判定（コードの取りこぼし対策）
+
+# ── 保有株の消化モデル ──
+# 「平常出来高を超えた分＝大口保有者の売り玉が市場で消化された量」と仮定して
+# 残存保有株がゼロになるタイミングを推定する。詳細は src/absorption.py を参照。
+absorption:
+  baseline_lookback_days: 180 # 平常出来高（中央値）を算出する遡り日数
+  max_report_age_days: 90     # 報告日がこれより古い保有者は消化計算の対象外
+  split_among_holders: true   # 同一銘柄に売り手が複数いる場合、超過出来高を人数で按分する
+  seller_share: 1.0           # 超過出来高のうち当該保有者に帰属すると仮定する割合
+                              # 1.0=全部（消化を早めに見積もる）。慎重に見るなら0.5〜0.8
+  down_day_weight: 1.0        # 下落日の超過出来高の重み
+  up_day_weight: 1.0          # 上昇日の超過出来高の重み（下落局面重視なら下げる）
+  pace_window: 10             # 直近何営業日の平均で消化ペースを見るか
+
+# ── 通知条件 ──
+notify:
+  progress_tiers: [0.5, 0.8, 1.0] # 消化率がこの水準に達したら通知（1.0=売り切り推定）
+  near_5pct_threshold: 6.0        # 保有割合がこの%を下回ったら「5%接近」を通知
+  projection_notice_days: 5       # 売り切り見込みがこの営業日数以内なら「接近」を通知

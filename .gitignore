@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ログ（日々増えるため管理対象外）
+**/logs/
+
+# ツールの実行時状態・キャッシュ
+strategies/edinet_holder_monitor/state/
+
+# 分析の中間生成物（5分足キャッシュは大きいので必要に応じて手動管理）
+analysis/output/*.json
+
+# 秘密情報を書きがちなファイル（APIキー等は環境変数で渡すこと）
+.env
+*.key
+secrets.yaml

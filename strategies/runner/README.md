@@ -24,8 +24,11 @@ cd strategies\runner
 pip install -r requirements.txt
 # config.yaml は作成済み（config.example.yamlと同内容）。閾値を変える場合はここを編集
 
-# 毎回
-$env:KABU_API_PASSWORD = "本番用APIパスワード"
+# 初回のみ: パスワード・APIキーを永続化する（下記「認証情報の設定」参照）
+setx KABU_API_PASSWORD "本番用APIパスワード"
+setx EDINET_API_KEY "取得したEDINET APIキー"
+
+# 毎回はこれだけ
 cd src
 python main.py --config ../config.yaml
 ```
@@ -33,6 +36,29 @@ python main.py --config ../config.yaml
 前提: kabuステーション（デスクトップアプリ）が起動・ログイン済みで、API設定が有効なこと。
 監視銘柄は全ストラテジー共通の [../symbols.yaml](../symbols.yaml) で管理する。
 停止は `Ctrl + C`。
+
+## 認証情報の設定（毎回入力しないために）
+
+`$env:KABU_API_PASSWORD = "..."` はそのターミナルを閉じると消えるため毎回入力が必要になる。
+`setx` を使うと**Windowsのユーザー環境変数として永続化**され、以後は入力不要になる。
+
+```powershell
+setx KABU_API_PASSWORD "本番用APIパスワード"
+setx EDINET_API_KEY "取得したEDINET APIキー"
+```
+
+- **一度だけ実行すればよい**。設定は**新しく開いたターミナルから有効**になる
+  （実行中のターミナルには反映されないので、一度閉じて開き直すこと）
+- 確認: `echo $env:KABU_API_PASSWORD`（新しいターミナルで）
+- 変更: 同じ `setx` をやり直す。削除: `Remove-ItemProperty -Path HKCU:\Environment -Name KABU_API_PASSWORD`
+
+**注意**: `setx` の値はレジストリ（`HKCU:\Environment`）に**平文で保存される**。
+自分専用のPCであれば通常問題ないが、共用PCでは避けること。
+なお、**パスワードをconfigやREADMEなどgit管理下のファイルに書いてはいけない**
+（リポジトリには `.gitignore` を用意済みだが、そもそも書かない運用にする）。
+
+より安全にしたい場合は Windows資格情報マネージャー（`keyring` ライブラリ経由）に
+保管する方式にもできる。必要なら対応可能。
 
 ## ログの保存先
 
@@ -77,6 +103,25 @@ AIストラテジー（仮想売買）の詳細は [../AIStrategys/README.md](..
   `RunnerEngine.__init__` にロード処理、`handle()` に配信処理を追加 →
   (3) `runner/config.yaml` にパラメータセクションを追加 →
   (4) `runner/src/notifier.py` の `build_message` に通知フォーマットを追加
+
+## 同時起動: EDINET大量保有報告書モニタ
+
+`runner/config.yaml` の `edinet_holder_monitor.enabled: true` により、ランナー起動時に
+[../edinet_holder_monitor/](../edinet_holder_monitor/README.md) が**バックグラウンドで
+一緒に起動**する（`python main.py --config ../config.yaml` だけでよい）。
+
+- 大口保有者の売却進捗を追い、5%割れ・売り切り推定などを通知する
+- ランナーは常時稼働のWebSocketループ、モニタは日次バッチなので、**別スレッド**で
+  「起動時に1回 → 以降 `interval_hours` ごと」に実行する。PUSH処理はブロックしない
+- 通知・ログはランナー側に一元化される（`runner/logs/` に出る）
+- **要: 環境変数 `EDINET_API_KEY`**。未設定なら警告を出してスキップし、
+  ランナー本体はそのまま動作する。EDINET側でエラーが起きてもランナーは落ちない
+
+```powershell
+setx EDINET_API_KEY "取得したAPIキー"   # 一度だけ。新しいターミナルから有効
+```
+
+止めたい場合は `edinet_holder_monitor.enabled: false`。単体実行も従来どおり可能。
 
 ## 関連ツール: 定期買い集め検知（楽天マーケットスピードII RSS版）
 

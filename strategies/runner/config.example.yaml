@@ -73,3 +73,14 @@ strategies:
     entry_end: "15:00"
     stop_loss_pct: 1.0
     take_profit_pct: 1.0
+
+# ── EDINET大量保有報告書モニタ（別系統・バックグラウンド実行） ──
+# 大口保有者の売却進捗を追い、売り切りタイミングを通知する日次バッチを
+# ランナー起動時にバックグラウンドで開始する（PUSH処理はブロックしない）。
+# 要: 環境変数 EDINET_API_KEY（未設定ならスキップされる）
+# 詳細: ../edinet_holder_monitor/README.md
+edinet_holder_monitor:
+  enabled: true
+  interval_hours: 24    # チェック間隔（起動時に1回 → 以降この間隔で繰り返す）
+  days: 30              # 起動直後のチェックで遡る日数（2回目以降は前回チェック日から）
+  config_path: null     # モニタ側のconfig。null=../edinet_holder_monitor/config.yaml

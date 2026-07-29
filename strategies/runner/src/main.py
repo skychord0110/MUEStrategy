@@ -7,6 +7,7 @@ kabuステーションへの接続・認証・銘柄登録を1回だけ行い、
 起動前提:
   - kabuステーション（デスクトップアプリ）を起動し、ログインしておく
   - 環境変数 KABU_API_PASSWORD にkabuステーションのAPIパスワードを設定しておく
+    （毎回入力しないよう setx で永続化推奨。詳細は ../README.md「認証情報の設定」）
   - config.yaml で有効にするストラテジーと閾値を設定する
   - 監視銘柄は ../symbols.yaml（全ストラテジー共通）で管理する
 
@@ -75,6 +76,56 @@ def parse_quiet_windows(windows: list) -> list:
 def parse_time(s: str) -> dtime:
     h, m = map(int, s.split(":"))
     return dtime(h, m)
+
+
+def start_edinet_monitor(cfg: dict, log):
+    """EDINET大量保有報告書モニタをバックグラウンドで定期実行する。
+
+    本体（strategies/edinet_holder_monitor）は日次バッチだが、ランナーは常時稼働の
+    WebSocketループのため、別スレッドで「起動時に1回 → 以降 interval_hours ごと」に回す。
+    PUSH処理をブロックしないこと、EDINET側の失敗でランナーを落とさないことを優先する。
+    通知はランナーのnotifier経由で出るので、ログは runner/logs/ に一元化される。
+    """
+    import threading
+
+    mon_dir = os.path.join(STRATEGIES_ROOT, "edinet_holder_monitor")
+    mon_src = os.path.join(mon_dir, "src")
+    mon_config = cfg.get("config_path") or os.path.join(mon_dir, "config.yaml")
+    if not os.path.exists(mon_config):
+        log.warning("EDINETモニタの設定が見つからないためスキップします: %s", mon_config)
+        return
+    if not os.environ.get("EDINET_API_KEY"):
+        log.warning("環境変数 EDINET_API_KEY が未設定のためEDINETモニタは起動しません"
+                    "（設定方法: setx EDINET_API_KEY \"取得したAPIキー\"）")
+        return
+
+    # モニタ側の内部import（absorption / edinet_client）を解決するためsys.pathに追加する
+    if mon_src not in sys.path:
+        sys.path.insert(0, mon_src)
+    spec = importlib.util.spec_from_file_location(
+        "edinet_holder_monitor__main", os.path.join(mon_src, "main.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    interval = float(cfg.get("interval_hours", 24)) * 3600
+    days = cfg.get("days")
+
+    def loop():
+        first = True
+        while True:
+            try:
+                alerts = mod.run_once(mon_config, log=log,
+                                      notify_fn=notifier.notify_message,
+                                      days=days if first else None)
+                log.info("EDINETモニタ: チェック完了（新規通知 %d件）", len(alerts))
+            except Exception:
+                log.exception("EDINETモニタの実行に失敗しました（ランナーは継続します）")
+            first = False
+            time.sleep(interval)
+
+    threading.Thread(target=loop, name="edinet-monitor", daemon=True).start()
+    log.info("EDINETモニタをバックグラウンドで起動しました（%.1f時間ごと）",
+             interval / 3600)
 
 
 class RunnerEngine:
@@ -227,7 +278,9 @@ def main():
 
     api_password = os.environ.get("KABU_API_PASSWORD")
     if not api_password:
-        log.error("環境変数 KABU_API_PASSWORD が設定されていません")
+        log.error("環境変数 KABU_API_PASSWORD が設定されていません。"
+                  "次のコマンドで永続化できます（一度だけ実行し、ターミナルを開き直す）: "
+                  'setx KABU_API_PASSWORD "本番用APIパスワード"')
         sys.exit(1)
 
     engine = RunnerEngine(config)
@@ -236,6 +289,11 @@ def main():
         sys.exit(1)
     log.info("有効ストラテジー: %s",
              ", ".join(list(engine.detectors.keys()) + list(engine.ai_strategies.keys())))
+
+    # EDINET大量保有報告書モニタ（別系統・バックグラウンド実行）
+    edinet_cfg = config.get("edinet_holder_monitor", {})
+    if edinet_cfg.get("enabled"):
+        start_edinet_monitor(edinet_cfg, log)
 
     client = KabuClient(environment=config["environment"], api_password=api_password)
     client.authenticate()
