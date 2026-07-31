@@ -12,6 +12,14 @@
    仮想買いエントリーする。
    検証結果: 勝率80%・期待値+0.65%/回（SL-1%/TP+1%・ただしn=5と極小）
 
+3. PanicReboundStrategy（投げ売り反発／セリングクライマックス）
+   安値圏でOVERが急減し、ほぼ同数が買い気配にぶつけられた（投げが出切った）局面で
+   仮想買いエントリーする。時間帯を問わない点が上2つと異なる。
+   検証結果（2026-07-13〜31・銘柄1日1回・コスト控除後）:
+     SL-1%/TP+2% で n=12・勝率66.7%・期待値+0.678%・PF2.72
+   ただし **n=12と極小で、week1は勝率40%・期待値-0.43%とマイナス**。
+   プラスはすべてweek3由来であり、有効性は未確定。フォワード検証が目的。
+
 どちらも**発注は一切行わない**。仮想エントリー/決済をログに残し、
 フォワード検証（実際の勝率・期待値の確認）に使う。
 
@@ -201,4 +209,49 @@ class ConfluenceStrategy:
             return []
         entry = self.book.enter(symbol, price, msg_time)
         entry["trigger"] = "+".join(sorted(active))
+        return [entry]
+
+
+class PanicReboundStrategy:
+    """投げ売り反発戦略（仮想売買）。
+
+    エントリー: 投げ売り検知（panic_sell_detector）のアラートで仮想買い。
+                同一銘柄は1日1回まで。既定では stage="DUMP"（買い気配へぶつけ＝投げが
+                実際に消化された局面）のみを対象とし、ABSORBED は含めない。
+    決済: 損切り-stop_loss_pct% / 利確+take_profit_pct% / 残りは大引け
+
+    他の2戦略との違い:
+      午後限定ではなく**終日**が対象。投げ売りは寄り付き直後のパニックでも起こり、
+      検証でも前場・後場の双方でプラスだったため時間帯を絞っていない。
+      価格フィルタも既定では無効（低位株でも機能したため）。
+    """
+
+    def __init__(self, entry_start: dtime = dtime(9, 0), entry_end: dtime = dtime(15, 0),
+                 stop_loss_pct: float = 1.0, take_profit_pct: float = 2.0,
+                 min_entry_price: float = 0.0, stages: tuple = ("DUMP",)):
+        self.entry_start = entry_start
+        self.entry_end = entry_end
+        self.min_entry_price = min_entry_price
+        self.stages = tuple(stages)
+        self.book = PaperBook(stop_loss_pct, take_profit_pct)
+
+    def on_price(self, symbol: str, price, msg_time) -> list:
+        alert = self.book.check_exit(symbol, price, msg_time)
+        return [alert] if alert else []
+
+    def on_signal(self, source: str, alert: dict, msg_time) -> list:
+        if source != "panic_sell_detector":
+            return []
+        if alert.get("stage") not in self.stages:
+            return []
+        if not _in_window(msg_time, self.entry_start, self.entry_end):
+            return []
+        symbol = alert["symbol"]
+        price = alert.get("price")
+        if price is None or price < self.min_entry_price:
+            return []
+        if not self.book.can_enter(symbol, msg_time):
+            return []
+        entry = self.book.enter(symbol, price, msg_time)
+        entry["trigger"] = "投げ売り"
         return [entry]

@@ -65,6 +65,18 @@ strategies:
     min_entry_price: 500.0 # この価格未満の銘柄はエントリーしない（低位株はノイズが大きく
                            # 勝率が落ちるため。0でフィルタ無効。詳細: ../AIStrategys/README.md）
 
+  # 投げ売り反発（セリクラ検知→仮想買い）。終日が対象で時間帯を絞らない
+  # 検証: n=12・勝率66.7%・期待値+0.678%（SL1%/TP2%）だが week1 はマイナス。
+  # サンプルが極小のためフォワード検証が目的。詳細: ../AIStrategys/README.md
+  panic_rebound:
+    enabled: true
+    entry_start: "09:00"   # 投げ売りは寄り付き直後にも起こるため終日を対象にする
+    entry_end: "15:00"
+    stop_loss_pct: 1.0     # 損切り幅（%）。浅めに置き、伸びる時だけ取る設計
+    take_profit_pct: 2.0   # 利確幅（%）。リスクリワード1:2
+    min_entry_price: 0.0   # 価格下限（0=無効）。低位株でも機能したため既定は無効
+    stages: ["DUMP"]       # 対象の段階。DUMP=買い気配へぶつけ / ABSORBED=投げ売り吸収
+
   # 複合シグナル（午後に30分以内でUNDER急増と小口売り連続が両方点灯→仮想買い）
   confluence:
     enabled: true

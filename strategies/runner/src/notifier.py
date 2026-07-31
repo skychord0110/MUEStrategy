@@ -47,10 +47,11 @@ STRATEGY_LABELS = {
     "under_surge_detector": "UNDER急増",
     "afternoon_reversal": "AI午後引け戻り",
     "confluence": "AI複合シグナル",
+    "panic_rebound": "AI投げ売り反発",
 }
 
 # AIストラテジー（仮想売買）のストラテジー名
-AI_PAPER_STRATEGIES = ("afternoon_reversal", "confluence")
+AI_PAPER_STRATEGIES = ("afternoon_reversal", "confluence", "panic_rebound")
 
 PANIC_STAGE_LABELS = {
     "ABSORBED": "投げ売り吸収",

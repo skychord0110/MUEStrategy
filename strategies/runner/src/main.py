@@ -177,7 +177,8 @@ class RunnerEngine:
         self.ai_strategies = {}
         ar = strategies_cfg.get("afternoon_reversal", {})
         cf = strategies_cfg.get("confluence", {})
-        if ar.get("enabled") or cf.get("enabled"):
+        pr = strategies_cfg.get("panic_rebound", {})
+        if ar.get("enabled") or cf.get("enabled") or pr.get("enabled"):
             ai_mod = load_detector_module("AIStrategys")
             if ar.get("enabled"):
                 self.ai_strategies["afternoon_reversal"] = ai_mod.AfternoonReversalStrategy(
@@ -194,6 +195,15 @@ class RunnerEngine:
                     entry_end=parse_time(cf.get("entry_end", "15:00")),
                     stop_loss_pct=cf.get("stop_loss_pct", 1.0),
                     take_profit_pct=cf.get("take_profit_pct", 1.0),
+                )
+            if pr.get("enabled"):
+                self.ai_strategies["panic_rebound"] = ai_mod.PanicReboundStrategy(
+                    entry_start=parse_time(pr.get("entry_start", "09:00")),
+                    entry_end=parse_time(pr.get("entry_end", "15:00")),
+                    stop_loss_pct=pr.get("stop_loss_pct", 1.0),
+                    take_profit_pct=pr.get("take_profit_pct", 2.0),
+                    min_entry_price=pr.get("min_entry_price", 0.0),
+                    stages=tuple(pr.get("stages", ["DUMP"])),
                 )
 
     def handle(self, data: dict, now=None) -> list:
