@@ -1,111 +1,111 @@
 # 全ストラテジー共通の監視銘柄リスト
 # ここを編集すれば、全ストラテジー（small_lot_sell_detector / panic_sell_detector /
-# under_surge_detector / 今後追加するもの）に反映される。
-# 楽天RSS版（periodic_buy_rss）も既定でこのリストを参照する。
+# under_surge_detector / AIStrategys / edinet_holder_monitor / periodic_buy_rss）に反映される。
 #
 # 注意:
 #   - kabuステーションAPIのPUSH配信の銘柄登録上限は50銘柄（アプリ全体で共有）。
 #     この上限に合わせ、指定リストの上位50銘柄を登録している。
 #   - 各ストラテジーは起動時に「全登録解除→このリストを登録」するため、
 #     並走させる場合も全ストラテジーがこの同一リストを参照していれば競合しない。
+#   - 最終更新: 2026-07-31
 symbols:
-  - symbol: "3791"
-    exchange: 1   # 1 = 東証
-  - symbol: "4418"
-    exchange: 1   # 1 = 東証
-  - symbol: "4412"
-    exchange: 1   # 1 = 東証
-  - symbol: "5026"
-    exchange: 1   # 1 = 東証
-  - symbol: "5574"
+  - symbol: "4894"
     exchange: 1   # 1 = 東証
   - symbol: "6047"
     exchange: 1   # 1 = 東証
-  - symbol: "4813"
-    exchange: 1   # 1 = 東証
-  - symbol: "5707"
-    exchange: 1   # 1 = 東証
-  - symbol: "7794"
-    exchange: 1   # 1 = 東証
-  - symbol: "6217"
-    exchange: 1   # 1 = 東証
-  - symbol: "7373"
-    exchange: 1   # 1 = 東証
-  - symbol: "1514"
-    exchange: 1   # 1 = 東証
-  - symbol: "4575"
-    exchange: 1   # 1 = 東証
-  - symbol: "6620"
-    exchange: 1   # 1 = 東証
-  - symbol: "4894"
-    exchange: 1   # 1 = 東証
-  - symbol: "4165"
-    exchange: 1   # 1 = 東証
-  - symbol: "3692"
-    exchange: 1   # 1 = 東証
-  - symbol: "5724"
-    exchange: 1   # 1 = 東証
-  - symbol: "5817"
-    exchange: 1   # 1 = 東証
-  - symbol: "3267"
+  - symbol: "7034"
     exchange: 1   # 1 = 東証
   - symbol: "9256"
     exchange: 1   # 1 = 東証
-  - symbol: "2998"
+  - symbol: "5026"
     exchange: 1   # 1 = 東証
-  - symbol: "4570"
+  - symbol: "6217"
     exchange: 1   # 1 = 東証
-  - symbol: "9227"
-    exchange: 1   # 1 = 東証
-  - symbol: "4840"
-    exchange: 1   # 1 = 東証
-  - symbol: "4446"
+  - symbol: "5817"
     exchange: 1   # 1 = 東証
   - symbol: "6433"
     exchange: 1   # 1 = 東証
-  - symbol: "9130"
+  - symbol: "3692"
     exchange: 1   # 1 = 東証
-  - symbol: "5597"
+  - symbol: "4840"
+    exchange: 1   # 1 = 東証
+  - symbol: "3444"
+    exchange: 1   # 1 = 東証
+  - symbol: "4418"
+    exchange: 1   # 1 = 東証
+  - symbol: "7794"
     exchange: 1   # 1 = 東証
   - symbol: "4422"
     exchange: 1   # 1 = 東証
-  - symbol: "5132"
+  - symbol: "4579"
     exchange: 1   # 1 = 東証
-  - symbol: "4013"
+  - symbol: "5724"
     exchange: 1   # 1 = 東証
-  - symbol: "9556"
+  - symbol: "4165"
     exchange: 1   # 1 = 東証
-  - symbol: "7071"
+  - symbol: "9115"
+    exchange: 1   # 1 = 東証
+  - symbol: "4446"
+    exchange: 1   # 1 = 東証
+  - symbol: "2998"
+    exchange: 1   # 1 = 東証
+  - symbol: "4412"
+    exchange: 1   # 1 = 東証
+  - symbol: "7375"
+    exchange: 1   # 1 = 東証
+  - symbol: "1514"
+    exchange: 1   # 1 = 東証
+  - symbol: "2216"
+    exchange: 1   # 1 = 東証
+  - symbol: "5707"
+    exchange: 1   # 1 = 東証
+  - symbol: "4813"
+    exchange: 1   # 1 = 東証
+  - symbol: "5597"
+    exchange: 1   # 1 = 東証
+  - symbol: "7373"
+    exchange: 1   # 1 = 東証
+  - symbol: "5892"
+    exchange: 1   # 1 = 東証
+  - symbol: "4575"
     exchange: 1   # 1 = 東証
   - symbol: "5590"
     exchange: 1   # 1 = 東証
+  - symbol: "6228"
+    exchange: 1   # 1 = 東証
+  - symbol: "9130"
+    exchange: 1   # 1 = 東証
+  - symbol: "6620"
+    exchange: 1   # 1 = 東証
+  - symbol: "3267"
+    exchange: 1   # 1 = 東証
   - symbol: "7352"
+    exchange: 1   # 1 = 東証
+  - symbol: "5132"
+    exchange: 1   # 1 = 東証
+  - symbol: "5729"
+    exchange: 1   # 1 = 東証
+  - symbol: "4570"
+    exchange: 1   # 1 = 東証
+  - symbol: "5599"
     exchange: 1   # 1 = 東証
   - symbol: "4395"
     exchange: 1   # 1 = 東証
   - symbol: "5031"
     exchange: 1   # 1 = 東証
-  - symbol: "5599"
-    exchange: 1   # 1 = 東証
-  - symbol: "5588"
-    exchange: 1   # 1 = 東証
   - symbol: "4011"
-    exchange: 1   # 1 = 東証
-  - symbol: "6228"
-    exchange: 1   # 1 = 東証
-  - symbol: "3963"
-    exchange: 1   # 1 = 東証
-  - symbol: "5729"
     exchange: 1   # 1 = 東証
   - symbol: "4075"
     exchange: 1   # 1 = 東証
-  - symbol: "7115"
+  - symbol: "9235"
+    exchange: 1   # 1 = 東証
+  - symbol: "3963"
     exchange: 1   # 1 = 東証
   - symbol: "5591"
     exchange: 1   # 1 = 東証
-  - symbol: "5892"
+  - symbol: "3653"
     exchange: 1   # 1 = 東証
-  - symbol: "4579"
+  - symbol: "5994"
     exchange: 1   # 1 = 東証
-  - symbol: "4488"
+  - symbol: "4013"
     exchange: 1   # 1 = 東証
