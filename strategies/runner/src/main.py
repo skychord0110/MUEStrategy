@@ -128,6 +128,44 @@ def start_edinet_monitor(cfg: dict, log):
              interval / 3600)
 
 
+def start_periodic_buy_rss(cfg: dict, log):
+    """定期買い集め検知（楽天MS2 RSS・歩み値ベース）をバックグラウンドで実行する。
+
+    データ源が楽天証券（Excel＋マーケットスピードII）でkabuのPUSHとは別系統のため、
+    別スレッドで独自のポーリングループを回す。PUSH処理はブロックしない。
+    Excel/MS2が未起動でも一定回数リトライし、それでも駄目なら警告を出して諦める
+    （ランナー本体は動作を継続する）。通知はランナーのnotifier経由で一元化される。
+    """
+    import threading
+
+    tool_dir = os.path.join(STRATEGIES_ROOT, "periodic_buy_rss")
+    tool_src = os.path.join(tool_dir, "src")
+    tool_config = cfg.get("config_path") or os.path.join(tool_dir, "config.yaml")
+    if not os.path.exists(tool_config):
+        log.warning("RSS検知の設定が見つからないためスキップします: %s", tool_config)
+        return
+
+    # ツール側の内部import（tick_detector / ms2_rss）を解決するためsys.pathに追加する
+    if tool_src not in sys.path:
+        sys.path.insert(0, tool_src)
+    spec = importlib.util.spec_from_file_location(
+        "periodic_buy_rss__main", os.path.join(tool_src, "main.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def loop():
+        try:
+            mod.run_loop(tool_config, log=log, notify_fn=notifier.notify_message,
+                         connect_retry_seconds=cfg.get("connect_retry_seconds", 60),
+                         max_connect_retries=cfg.get("max_connect_retries", 10))
+        except Exception:
+            log.exception("RSS検知の実行に失敗しました（ランナーは継続します）")
+
+    threading.Thread(target=loop, name="periodic-buy-rss", daemon=True).start()
+    log.info("定期買い集め検知(RSS)をバックグラウンドで起動しました"
+             "（要: マーケットスピードII＋Excel(RSSアドイン)）")
+
+
 class RunnerEngine:
     """PUSHメッセージを有効な全detectorに配るディスパッチャ。"""
 
@@ -304,6 +342,11 @@ def main():
     edinet_cfg = config.get("edinet_holder_monitor", {})
     if edinet_cfg.get("enabled"):
         start_edinet_monitor(edinet_cfg, log)
+
+    # 定期買い集め検知（楽天MS2 RSS・歩み値ベース／別系統・バックグラウンド実行）
+    rss_cfg = config.get("periodic_buy_rss", {})
+    if rss_cfg.get("enabled"):
+        start_periodic_buy_rss(rss_cfg, log)
 
     client = KabuClient(environment=config["environment"], api_password=api_password)
     client.authenticate()

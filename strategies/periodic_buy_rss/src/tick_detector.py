@@ -21,16 +21,45 @@ from dataclasses import dataclass, field
 
 
 def classify_tick(price, last_price, last_side):
-    """ティックルールで約定方向を推定する。"buy"/"sell"/"unknown" を返す。"""
-    if price is None:
-        return "unknown"
-    if last_price is None:
+    """ティックルールで約定方向を推定する。"buy"/"sell"/"flat"/"unknown" を返す。
+
+    アップティック→buy、ダウンティック→sell、同値（ゼロティック）→"flat"。
+    "flat" を独立の値にしているのは、買い集めアルゴが同じ売り気配を叩き続けると
+    価格が動かず、直前の方向を引き継ぐ従来実装では検知できなかったため
+    （直前が売りなら買いを売りと誤判定してしまう）。
+    ゼロティックを買いとみなすかは buy_side_mode で選択する。
+    """
+    if price is None or last_price is None:
         return "unknown"
     if price > last_price:
         return "buy"
     if price < last_price:
         return "sell"
-    return last_side or "unknown"  # ゼロティックは直前の方向を引き継ぐ
+    return "flat"
+
+
+def is_buy_like(side, mode="non_down"):
+    """「買い側」とみなすか。歩み値には売買の別がないための近似。
+
+    strict   : アップティックのみ（価格が動かないアルゴ買いは取りこぼす）
+    non_down : アップティック＋同値（既定。売り気配を叩き続ける買いを拾える）
+    any      : 方向を問わない（最も緩い。誤検知は増える）
+    """
+    if mode == "any":
+        return side != "unknown"
+    if mode == "strict":
+        return side == "buy"
+    return side in ("buy", "flat")
+
+
+def is_trigger_like(side, trigger_side):
+    """トリガー約定とみなすか。"""
+    if trigger_side == "any":
+        return side != "unknown"
+    if trigger_side == "sell":
+        # 売り方起点。価格が動かない売りも拾えるよう flat を含める
+        return side in ("sell", "flat")
+    return side == trigger_side
 
 
 @dataclass
@@ -39,20 +68,25 @@ class SymbolState:
     day: object = None
     occurrences: int = 0
     delay_sum: float = 0.0
+    lot_sum: float = 0.0
     last_occurrence_time: object = None
     fired_tiers: set = field(default_factory=set)
 
 
 class PeriodicBuyTickDetector:
     def __init__(self, delay_seconds: float = 10.0,
-                 delay_tolerance_seconds: float = 1.0,
-                 trigger_side: str = "sell",
+                 delay_tolerance_seconds: float = 0.0,
+                 trigger_side: str = "any",
                  alert_tiers: list = None,
                  min_lot: int = 0,
-                 min_occurrence_gap_seconds: float = 2.0):
+                 min_occurrence_gap_seconds: float = 2.0,
+                 buy_side_mode: str = "non_down",
+                 lot_similarity_pct: float = 0.0):
         self.delay = delay_seconds
         self.delay_tol = delay_tolerance_seconds
         self.trigger_side = trigger_side  # "sell" / "buy" / "any"
+        self.buy_side_mode = buy_side_mode      # "strict" / "non_down" / "any"
+        self.lot_similarity_pct = lot_similarity_pct  # >0でロットの揃い方も要求
         default_tiers = [{"occurrences": 5, "label": "WATCH"},
                          {"occurrences": 10, "label": "STRONG"}]
         self.alert_tiers = sorted(alert_tiers or default_tiers, key=lambda t: t["occurrences"])
@@ -65,9 +99,7 @@ class PeriodicBuyTickDetector:
         return self.states.setdefault(symbol, SymbolState())
 
     def _trigger_matches(self, side: str) -> bool:
-        if self.trigger_side == "any":
-            return True
-        return side == self.trigger_side
+        return is_trigger_like(side, self.trigger_side)
 
     def on_trade(self, symbol: str, trade_time, price, volume, side) -> list:
         """1約定を処理し、発火したアラート（あれば）のリストを返す。
@@ -85,19 +117,29 @@ class PeriodicBuyTickDetector:
             state.day = day
             state.occurrences = 0
             state.delay_sum = 0.0
+            state.lot_sum = 0.0
             state.last_occurrence_time = None
             state.fired_tiers = set()
             state.history.clear()
 
-        if side == "buy" and (volume is None or volume >= self.min_lot):
-            lo = self.delay - self.delay_tol
-            hi = self.delay + self.delay_tol
+        if is_buy_like(side, self.buy_side_mode) and (volume is None or volume >= self.min_lot):
+            # 歩み値の時刻は秒未満切り捨てのため、tol=0 なら「表示上ちょうどN秒差」だけを数える。
+            # 浮動小数の誤差で取りこぼさないよう微小なイプシロンを見込む。
+            eps = 1e-6
+            lo = self.delay - self.delay_tol - eps
+            hi = self.delay + self.delay_tol + eps
             best_lag = None
-            for h_time, h_side in state.history:
+            for h_time, h_side, h_vol in state.history:
                 lag = (trade_time - h_time).total_seconds()
-                if lo <= lag <= hi and self._trigger_matches(h_side):
-                    if best_lag is None or abs(lag - self.delay) < abs(best_lag - self.delay):
-                        best_lag = lag
+                if not (lo <= lag <= hi) or not self._trigger_matches(h_side):
+                    continue
+                # ロットの揃い方も要求する場合（アルゴは同じ株数で刻むことが多い）
+                if self.lot_similarity_pct > 0 and volume and state.lot_sum and state.occurrences:
+                    avg = state.lot_sum / state.occurrences
+                    if abs(volume - avg) > avg * self.lot_similarity_pct:
+                        continue
+                if best_lag is None or abs(lag - self.delay) < abs(best_lag - self.delay):
+                    best_lag = lag
             if best_lag is not None:
                 if (state.last_occurrence_time is None
                         or (trade_time - state.last_occurrence_time).total_seconds()
@@ -105,6 +147,8 @@ class PeriodicBuyTickDetector:
                     state.occurrences += 1
                     state.delay_sum += best_lag
                     state.last_occurrence_time = trade_time
+                    if volume:
+                        state.lot_sum += volume
                     for tier in self.alert_tiers:
                         if (state.occurrences == tier["occurrences"]
                                 and tier["occurrences"] not in state.fired_tiers):
@@ -118,8 +162,9 @@ class PeriodicBuyTickDetector:
                                 "price": price,
                             })
 
-        if side != "unknown" or self.trigger_side == "any":
-            state.history.append((trade_time, side))
+        # 履歴には方向が判定できた約定をすべて残す（flat も含む＝同値約定もトリガーになりうる）
+        if side != "unknown":
+            state.history.append((trade_time, side, volume))
         while state.history and (trade_time - state.history[0][0]).total_seconds() > self.history_window:
             state.history.popleft()
 
@@ -129,29 +174,45 @@ class PeriodicBuyTickDetector:
 class TickDeduper:
     """RssTickList は毎回「直近N本」を返し重複するため、新規約定だけを取り出す。
 
-    バッチは古い順（oldest→newest）に正規化した [(time_key, price, volume), ...] を渡す。
-    time_key は歩み値の時刻文字列など、同一約定を識別できる値。
+    バッチは古い順（oldest→newest）に正規化した [(time_key, volume, price), ...] を渡す。
+
+    照合の考え方:
+      1行だけを目印にすると、同じ (時刻,出来高,約定値) が再出現したときに誤った位置で
+      一致してしまい、間の約定を取りこぼす。買い集めアルゴは「同じ株数を同値で刻む」ため
+      この重複がまさに起こりやすい。そこで**直前バッチの末尾 tail_size 行の並び**を
+      目印にし、その並びが現れる位置を末尾側から探す（複数行一致なら誤検出しにくい）。
     """
 
-    def __init__(self):
-        self.last_key = None  # 直近に emit した約定の (time_key, price, volume)
+    def __init__(self, tail_size: int = 5):
+        self.tail_size = max(1, tail_size)
+        self.tail = []        # 直近に emit した末尾の並び
+        self.last_time = None  # 取りこぼし時のフォールバック用
+
+    @staticmethod
+    def _find_last_subsequence(batch, tail):
+        """batch の中で tail（連続した並び）が最後に出現する開始位置を返す。無ければ None。"""
+        n, m = len(batch), len(tail)
+        if m == 0 or m > n:
+            return None
+        for i in range(n - m, -1, -1):
+            if batch[i:i + m] == tail:
+                return i
+        return None
 
     def new_trades(self, batch: list) -> list:
         if not batch:
             return []
-        if self.last_key is None:
+        if not self.tail:
             emitted = list(batch)
         else:
-            idx = None
-            for i in range(len(batch) - 1, -1, -1):  # 末尾側から一致位置を探す
-                if batch[i] == self.last_key:
-                    idx = i
-                    break
+            idx = self._find_last_subsequence(batch, self.tail)
             if idx is not None:
-                emitted = batch[idx + 1:]
+                emitted = batch[idx + len(self.tail):]
             else:
-                # オーバーラップを見失った（N本を超えて進んだ等）。時刻での best-effort。
-                last_time = self.last_key[0]
-                emitted = [t for t in batch if t[0] > last_time]
-        self.last_key = batch[-1]
+                # オーバーラップを見失った（N本を超えて進んだ／板寄せで飛んだ等）。
+                # 時刻での best-effort に切り替える。
+                emitted = ([t for t in batch if t[0] > self.last_time]
+                           if self.last_time is not None else list(batch))
+        self.tail = batch[-self.tail_size:]
+        self.last_time = batch[-1][0]
         return emitted

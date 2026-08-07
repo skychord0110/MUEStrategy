@@ -15,6 +15,9 @@ rss:
   cols_per_symbol: 4        # 銘柄ブロックの列間隔（時刻・出来高・約定値の3列＋余白1）
   newest_first: true        # RssTickListが新しい順に並ぶ場合true（読取後に古い順へ正規化）
   poll_interval_seconds: 1.0 # ポーリング間隔（秒）
+  session_start: "09:00"    # 検知対象の開始時刻。これより前は検知しない（寄り付き前を除外）
+  session_end: "15:30"      # 検知対象の終了時刻。これより後は検知しない
+  idle_poll_seconds: 30     # 時間外に時刻だけ確認する間隔（秒）。Excelは読みに行かない
   warmup_seconds: 5         # 数式書き込み後、初回反映を待つ秒数
   workbook_name: null       # 対象ブック名。null=アクティブブック
   com_retries: 60           # ExcelがCOM呼び出しを拒否した際の再試行回数
@@ -23,15 +26,27 @@ rss:
 # ── 検知条件（kabu版 periodic_buy_detector と同じ考え方） ──
 detector:
   delay_seconds: 10.0             # トリガー約定から買いまでの狙うラグ（秒）
-  delay_tolerance_seconds: 1.0    # ラグの許容誤差（±秒）。歩み値は秒精度なので1.0前後を推奨
-  trigger_side: "sell"            # トリガー約定の向き: "sell"（既定・売りが多い）/ "buy" / "any"
+  delay_tolerance_seconds: 0.0    # ラグの許容誤差（±秒）。歩み値の時刻は秒未満が切り捨てられる
+                                  # ため、0.0＝表示上「丁度10秒差」のみを数える（手集計と同じ基準）。
+                                  # アルゴのラグが揺れていて取りこぼす場合は1.0に上げる
+  trigger_side: "any"             # トリガー約定の向き。「約定の10秒後の買い」を数えるので
+                                  # 既定は any（向きを問わない）。売り起点に絞るなら "sell"
   min_lot: 0                      # この株数未満の買いは無視（ノイズ除去。0で無効）
   min_occurrence_gap_seconds: 2.0 # この秒数以内の連続ヒットは二重カウントしない
+  buy_side_mode: "non_down"       # 「買い側」の判定方法。歩み値に売買の別がないための近似
+                                  #   strict  = アップティックのみ（同値で買い続けるアルゴを取りこぼす）
+                                  #   non_down= アップティック＋同値（既定・推奨）
+                                  #   any     = 方向を問わない（最も緩く誤検知が増える）
+  lot_similarity_pct: 0.0         # >0でロットの揃い方も要求（0.3→直近平均±30%以内）。
+                                  # アルゴは同じ株数で刻むことが多く、誤検知を減らす最有力の条件
   alert_tiers:                    # 「N秒後の買い」が当日この回数に達したら通知
     - occurrences: 5
       label: "WATCH"
     - occurrences: 10
       label: "STRONG"
+
+# 検知回数を定期的にログへ出す間隔（分）。手集計との突き合わせ用。0で無効
+summary_interval_minutes: 30
 
 # デバッグ: 起動直後N回ぶん、読み取った歩み値バッチの直近3件をログ出力する
 debug_raw_batches: 10

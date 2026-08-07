@@ -96,3 +96,14 @@ edinet_holder_monitor:
   interval_hours: 24    # チェック間隔（起動時に1回 → 以降この間隔で繰り返す）
   days: 30              # 起動直後のチェックで遡る日数（2回目以降は前回チェック日から）
   config_path: null     # モニタ側のconfig。null=../edinet_holder_monitor/config.yaml
+
+# ── 定期買い集め検知（楽天MS2 RSS・歩み値ベース／別系統・バックグラウンド実行） ──
+# 「約定の丁度10秒後に買われる」動きが1日に何度も出る銘柄を通知する（光通信系の
+# 買い集めサインの疑い）。データ源が楽天証券のためkabuのPUSHとは別系統で動く。
+# 要: マーケットスピードII起動＋Excel（RSSアドイン有効）＋空のブックを1つ開いておく
+# 詳細: ../periodic_buy_rss/README.md
+periodic_buy_rss:
+  enabled: true
+  connect_retry_seconds: 60   # Excel未起動時の再試行間隔（秒）
+  max_connect_retries: 10     # 再試行回数。既定は10分ぶん待ってから諦める
+  config_path: null           # ツール側のconfig。null=../periodic_buy_rss/config.yaml
