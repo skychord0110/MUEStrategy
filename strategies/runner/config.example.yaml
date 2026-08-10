@@ -115,3 +115,12 @@ periodic_buy_rss:
 periodic_buy_zscore:
   enabled: true
   config_path: null     # ツール側のconfig。null=../periodic_buy_zscore/config.yaml
+
+# ── 口座スナップショット（コントロールパネル表示用）──
+# 買付余力・建玉・評価損益を定期的に state/account.json に書き出す。
+# コントロールパネルはこのファイルを読むだけで、自分ではAPIトークンを発行しない。
+# （トークンは「別のトークンが新たに発行された時」に無効になるため、
+#   UIが独自に認証するとランナー側の発注が失敗しうる。詳細: src/account_snapshot.py）
+account_snapshot:
+  enabled: true
+  interval_seconds: 15  # 更新間隔（秒）。参照系2本だけなのでレート制限には余裕がある

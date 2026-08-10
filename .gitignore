@@ -9,6 +9,8 @@ venv/
 
 # ツールの実行時状態・キャッシュ
 strategies/edinet_holder_monitor/state/
+strategies/runner/state/
+strategies/symbols.yaml.bak
 
 # 分析の中間生成物（5分足キャッシュは大きいので必要に応じて手動管理）
 analysis/output/*.json

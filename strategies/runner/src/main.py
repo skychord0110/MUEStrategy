@@ -18,7 +18,9 @@ import importlib.util
 import json
 import logging
 import os
+import signal
 import sys
+import threading
 import time
 from datetime import datetime, time as dtime
 
@@ -26,10 +28,24 @@ import websocket
 import yaml
 
 from kabu_client import KabuClient
+import account_snapshot
 import notifier
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STRATEGIES_ROOT = os.path.normpath(os.path.join(BASE_DIR, "..", ".."))
+
+# コントロールパネルはこのファイルを置いて停止を要求する（詳細はメインループ末尾）。
+# 中身は停止したいプロセスのPID。他プロセスあて／読めない内容なら無視する。
+STOP_FILE = os.path.normpath(os.path.join(BASE_DIR, "..", "state", "stop.request"))
+
+
+def _stop_requested() -> bool:
+    """自分あての停止要求が置かれているか。"""
+    try:
+        with open(STOP_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip() == str(os.getpid())
+    except OSError:
+        return False
 
 
 def load_config(path: str) -> dict:
@@ -420,6 +436,16 @@ def main():
     notifier.setup_logging()
     log = logging.getLogger("runner")
 
+    # 前回の停止要求が残っていると起動直後に止まってしまうので消しておく。
+    # ただし「自分のPIDあての要求」は消さない。コントロールパネルが起動直後に停止を
+    # 要求した場合、ここで無条件に消すとその要求が握りつぶされてしまうため
+    # （実測: 起動2秒後の停止要求が効かず強制終了になった）。
+    if not _stop_requested():
+        try:
+            os.remove(STOP_FILE)
+        except OSError:
+            pass
+
     api_password = os.environ.get("KABU_API_PASSWORD")
     if not api_password:
         log.error("環境変数 KABU_API_PASSWORD が設定されていません。"
@@ -433,6 +459,13 @@ def main():
         sys.exit(1)
     log.info("有効ストラテジー: %s",
              ", ".join(list(engine.detectors.keys()) + list(engine.ai_strategies.keys())))
+
+    # 認証は最初に済ませる。以降のバックグラウンド処理はこのクライアント（＝同一トークン）を
+    # 共有する。トークンは「別のトークンが新たに発行された時」に無効になるため
+    # （公式リファレンス /token）、1プロセス内で発行するトークンは1つに保つ。
+    client = KabuClient(environment=config["environment"], api_password=api_password)
+    client.authenticate()
+    log.info("認証に成功しました（環境: %s, ポート: %s）", client.environment, client.port)
 
     # EDINET大量保有報告書モニタ（別系統・バックグラウンド実行）
     edinet_cfg = config.get("edinet_holder_monitor", {})
@@ -451,9 +484,8 @@ def main():
                     "z値方式と併用すると通知が重複します")
         start_periodic_buy_rss(rss_cfg, log, client)
 
-    client = KabuClient(environment=config["environment"], api_password=api_password)
-    client.authenticate()
-    log.info("認証に成功しました（環境: %s, ポート: %s）", client.environment, client.port)
+    # 口座状態のスナップショット（コントロールパネル表示用）
+    account_snapshot.start(client, config.get("account_snapshot", {}), log)
 
     symbols = load_symbols(config, args.config)
     log.info("監視銘柄: %d銘柄（%s から読み込み）", len(symbols),
@@ -492,17 +524,66 @@ def main():
     def on_open(ws):
         log.info("WebSocket接続確立。PUSH配信の受信を開始します。")
 
-    while True:
-        ws = websocket.WebSocketApp(
-            client.ws_url,
-            on_message=on_message,
-            on_error=on_error,
-            on_close=on_close,
-            on_open=on_open,
-        )
-        ws.run_forever()
-        log.warning("WebSocketが切断されました。5秒後に再接続します。")
-        time.sleep(5)
+    # ── 終了処理 ──
+    # WebSocketの受信は別スレッドで回し、メインスレッドは停止信号を待つだけにする。
+    # run_forever() の中で待っていると Ctrl+C / Ctrl+Break を受け取っても
+    # 反応できず（コントロールパネルからの停止が強制終了になる）、
+    # ログが途中で切れてしまうため。
+    stop = threading.Event()
+
+    def receive_loop():
+        while not stop.is_set():
+            ws = websocket.WebSocketApp(
+                client.ws_url,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+                on_open=on_open,
+            )
+            ws_holder[0] = ws
+            ws.run_forever()
+            if stop.is_set():
+                break
+            log.warning("WebSocketが切断されました。5秒後に再接続します。")
+            stop.wait(5)
+
+    def request_stop(signum, _frame):
+        log.warning("停止信号を受け取りました（signal=%s）。終了します", signum)
+        stop.set()
+        try:
+            if ws_holder[0] is not None:
+                ws_holder[0].close()
+        except Exception:
+            pass
+
+    ws_holder = [None]
+    signal.signal(signal.SIGINT, request_stop)
+    if hasattr(signal, "SIGBREAK"):      # Windows の Ctrl+Break
+        signal.signal(signal.SIGBREAK, request_stop)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, request_stop)
+
+    threading.Thread(target=receive_loop, daemon=True, name="ws-receive").start()
+    try:
+        while not stop.is_set():
+            # 停止要求ファイル（コントロールパネルからの停止手段）。
+            # Windowsでは、窓なしで起動した子プロセスは親と別のコンソールを持つため
+            # Ctrl+Break（コンソール制御イベント）が届かない。そこでファイル経由にする。
+            if _stop_requested():
+                try:
+                    os.remove(STOP_FILE)
+                except OSError:
+                    pass
+                request_stop("stopfile", None)
+                break
+            stop.wait(0.5)               # 短く待ち直して停止要求を取りこぼさない
+    except KeyboardInterrupt:
+        stop.set()
+
+    # 古い口座情報をコントロールパネルが表示し続けないよう消しておく。
+    # 銘柄登録は解除しない（他のツールが同じ登録を使うため）。
+    account_snapshot.clear()
+    log.info("ランナーを終了しました")
 
 
 if __name__ == "__main__":
