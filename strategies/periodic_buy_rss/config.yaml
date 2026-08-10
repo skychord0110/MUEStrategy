@@ -6,6 +6,22 @@
 # config に symbols: を直接書けばそちらが優先される（単一銘柄テスト用）。
 symbols_file: ../symbols.yaml
 
+# ── 歩み値の取得元 ──
+#   "kabu" = kabuステーションAPI /timeandsales（推奨・Excel不要）
+#   "rss"  = 楽天マーケットスピードII RSS（Excel経由・旧方式）
+# kabu を使う利点（2026-08-10に実機確認）:
+#   ・取得件数の上限が実質ない（RSSは直近300件まで／kabuは5,911件返った）
+#   ・時刻がISO8601で日付・TZ付き（RSSは日付が無く前日ティックの誤認が起きた）
+#   ・銘柄登録が不要。Excel・マーケットスピードII・COM連携が不要
+source: "kabu"
+
+# kabu歩み値APIの設定（source: kabu のとき）
+kabu:
+  exchange: 1                 # 市場コード（1=東証）
+  poll_interval_seconds: 1.0  # 1銘柄あたりの取得間隔（秒）。50銘柄なら1周およそ50秒
+                              # レート制限(429)が出る場合はここを長くする。
+                              # 毎回その日の全件が返るため、間隔を空けても取りこぼしはない
+
 # ── RSS（Excel連携）の設定 ──
 rss:
   market_suffix: "T"        # RssTickListに渡す市場記号（東証="T"）

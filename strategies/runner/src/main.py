@@ -128,13 +128,93 @@ def start_edinet_monitor(cfg: dict, log):
              interval / 3600)
 
 
-def start_periodic_buy_rss(cfg: dict, log):
-    """定期買い集め検知（楽天MS2 RSS・歩み値ベース）をバックグラウンドで実行する。
+def build_autotrader(config: dict, client, log):
+    """自動売買（strategies/autotrade）を用意する。無効・未設定なら None を返す。
 
-    データ源が楽天証券（Excel＋マーケットスピードII）でkabuのPUSHとは別系統のため、
-    別スレッドで独自のポーリングループを回す。PUSH処理はブロックしない。
-    Excel/MS2が未起動でも一定回数リトライし、それでも駄目なら警告を出して諦める
-    （ランナー本体は動作を継続する）。通知はランナーのnotifier経由で一元化される。
+    実弾が動きうる部分なので、設定が無い／読めない場合は黙って無効にする。
+    """
+    at_dir = os.path.join(STRATEGIES_ROOT, "autotrade")
+    at_src = os.path.join(at_dir, "src")
+    at_config = os.path.join(at_dir, "config.yaml")
+    if not os.path.exists(at_config):
+        return None
+    if at_src not in sys.path:
+        sys.path.insert(0, at_src)
+    try:
+        with open(at_config, "r", encoding="utf-8") as f:
+            at_cfg = yaml.safe_load(f) or {}
+        import account as at_account
+        import executor as at_executor
+        import trader as at_trader
+    except Exception:
+        log.exception("自動売買の読み込みに失敗しました（自動売買は無効のまま継続します）")
+        return None
+
+    enabled = at_cfg.get("enabled")
+    on = [k for k, v in (at_cfg.get("strategies") or {}).items() if v]
+    if not enabled or not on:
+        log.info("自動売買: 無効（enabled=%s / 実売買対象=%s）。仮想売買のみ継続します",
+                 enabled, on or "なし")
+        return None
+
+    mode = "DRY-RUN（送信しません）" if at_cfg.get("dry_run", True) else "★実発注★"
+    log.warning("自動売買: 有効  モード=%s  対象戦略=%s", mode, on)
+    if not at_cfg.get("dry_run", True):
+        log.warning("★★ dry_run=false です。実際に注文が発注されます ★★")
+
+    view = at_account.AccountView(client, log)
+    ex = at_executor.Executor(at_cfg, client=client, log=log)
+    # 各戦略の損切り/利確幅は runner 側の設定を引き継ぐ
+    sp = {}
+    for name in ("afternoon_reversal", "panic_rebound", "confluence"):
+        s = (config.get("strategies") or {}).get(name) or {}
+        sp[name] = {"stop_loss_pct": s.get("stop_loss_pct", 2.0),
+                    "take_profit_pct": s.get("take_profit_pct", 2.0)}
+    return at_trader.AutoTrader(at_cfg, ex, view, log=log, strategy_params=sp), view
+
+
+def start_periodic_buy_zscore(cfg: dict, log, client=None):
+    """定期買い集め検知（z値方式）をバックグラウンドで実行する。
+
+    kabuステーションAPIの歩み値をポーリングし、「約定のちょうど10秒後の買い」が
+    他のラグと比べて統計的に突出している銘柄を通知する。
+    PUSHとは別系統のポーリングになるため別スレッドで回す。
+    失敗してもランナー本体は動作を継続する。
+    """
+    import threading
+
+    tool_dir = os.path.join(STRATEGIES_ROOT, "periodic_buy_zscore")
+    tool_src = os.path.join(tool_dir, "src")
+    tool_config = cfg.get("config_path") or os.path.join(tool_dir, "config.yaml")
+    if not os.path.exists(tool_config):
+        log.warning("定期買い集め検知(z値)の設定が見つからないためスキップします: %s", tool_config)
+        return
+    if tool_src not in sys.path:
+        sys.path.insert(0, tool_src)
+    spec = importlib.util.spec_from_file_location(
+        "periodic_buy_zscore__main", os.path.join(tool_src, "main.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def loop():
+        try:
+            mod.run_loop(tool_config, log=log, notify_fn=notifier.notify_message,
+                         kabu_client=client)
+        except Exception:
+            log.exception("定期買い集め検知(z値)の実行に失敗しました（ランナーは継続します）")
+
+    threading.Thread(target=loop, name="periodic-buy-zscore", daemon=True).start()
+    log.info("定期買い集め検知(z値方式)をバックグラウンドで起動しました")
+
+
+def start_periodic_buy_rss(cfg: dict, log, client=None):
+    """定期買い集め検知（歩み値ベース）をバックグラウンドで実行する。
+
+    取得元はツール側 config の source で選ぶ:
+      "kabu" … kabuステーションAPI /timeandsales（既定・Excel不要）
+      "rss"  … 楽天マーケットスピードII RSS（Excel経由・旧方式）
+    PUSHとは別系統のポーリングになるため別スレッドで回す（PUSH処理はブロックしない）。
+    失敗してもランナー本体は動作を継続する。通知はランナーのnotifier経由で一元化される。
     """
     import threading
 
@@ -157,13 +237,13 @@ def start_periodic_buy_rss(cfg: dict, log):
         try:
             mod.run_loop(tool_config, log=log, notify_fn=notifier.notify_message,
                          connect_retry_seconds=cfg.get("connect_retry_seconds", 60),
-                         max_connect_retries=cfg.get("max_connect_retries", 10))
+                         max_connect_retries=cfg.get("max_connect_retries", 10),
+                         kabu_client=client)
         except Exception:
-            log.exception("RSS検知の実行に失敗しました（ランナーは継続します）")
+            log.exception("定期買い集め検知の実行に失敗しました（ランナーは継続します）")
 
-    threading.Thread(target=loop, name="periodic-buy-rss", daemon=True).start()
-    log.info("定期買い集め検知(RSS)をバックグラウンドで起動しました"
-             "（要: マーケットスピードII＋Excel(RSSアドイン)）")
+    threading.Thread(target=loop, name="periodic-buy", daemon=True).start()
+    log.info("定期買い集め検知をバックグラウンドで起動しました")
 
 
 class RunnerEngine:
@@ -171,6 +251,7 @@ class RunnerEngine:
 
     def __init__(self, config: dict):
         self.detectors = {}
+        self.autotrader = None      # 自動売買。main()から差し込む（未設定なら仮想売買のみ）
         strategies_cfg = config.get("strategies", {})
 
         sl = strategies_cfg.get("small_lot_sell_detector", {})
@@ -312,6 +393,21 @@ class RunnerEngine:
                     for alert in strat.on_signal(base_name, base_alert, now):
                         results.append((name, alert))
 
+        # 自動売買: 建玉の執行（板の更新ごと）とエントリー判定
+        # 例外が出てもPUSH処理と仮想売買は止めない
+        if self.autotrader is not None:
+            try:
+                sell1_price = sell_levels[0][0] if sell_levels else None
+                self.autotrader.on_tick(symbol, current_price, buy1_price,
+                                        sell1_price, now)
+                for name, alert in results:
+                    if name in self.ai_strategies and alert.get("type") == "ENTRY":
+                        self.autotrader.on_signal(name, alert, now)
+                self.autotrader.poll(now)
+            except Exception:
+                logging.getLogger("runner").exception(
+                    "自動売買の処理でエラー（ランナーは継続します）")
+
         return results
 
 
@@ -343,10 +439,17 @@ def main():
     if edinet_cfg.get("enabled"):
         start_edinet_monitor(edinet_cfg, log)
 
-    # 定期買い集め検知（楽天MS2 RSS・歩み値ベース／別系統・バックグラウンド実行）
+    # 定期買い集め検知（z値方式・現行）
+    z_cfg = config.get("periodic_buy_zscore", {})
+    if z_cfg.get("enabled"):
+        start_periodic_buy_zscore(z_cfg, log, client)
+
+    # 定期買い集め検知（旧・生カウント方式）。既定は無効
     rss_cfg = config.get("periodic_buy_rss", {})
     if rss_cfg.get("enabled"):
-        start_periodic_buy_rss(rss_cfg, log)
+        log.warning("旧方式(periodic_buy_rss)が有効です。"
+                    "z値方式と併用すると通知が重複します")
+        start_periodic_buy_rss(rss_cfg, log, client)
 
     client = KabuClient(environment=config["environment"], api_password=api_password)
     client.authenticate()
@@ -358,6 +461,17 @@ def main():
     client.unregister_all()
     reg_result = client.register_symbols(symbols)
     log.info("銘柄登録結果: %s", reg_result)
+
+    # 自動売買（strategies/autotrade）。無効なら None のまま＝仮想売買のみ
+    built = build_autotrader(config, client, log)
+    if built:
+        engine.autotrader, at_view = built
+        try:
+            at_view.load_master([(s["symbol"], s["exchange"]) for s in symbols])
+            at_view.refresh("2")
+        except Exception:
+            log.exception("自動売買の初期化に失敗したため無効にします")
+            engine.autotrader = None
 
     debug_remaining = [config.get("debug_raw_messages", 0)]
 

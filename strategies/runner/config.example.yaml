@@ -97,13 +97,21 @@ edinet_holder_monitor:
   days: 30              # 起動直後のチェックで遡る日数（2回目以降は前回チェック日から）
   config_path: null     # モニタ側のconfig。null=../edinet_holder_monitor/config.yaml
 
-# ── 定期買い集め検知（楽天MS2 RSS・歩み値ベース／別系統・バックグラウンド実行） ──
-# 「約定の丁度10秒後に買われる」動きが1日に何度も出る銘柄を通知する（光通信系の
-# 買い集めサインの疑い）。データ源が楽天証券のためkabuのPUSHとは別系統で動く。
-# 要: マーケットスピードII起動＋Excel（RSSアドイン有効）＋空のブックを1つ開いておく
+# ── 定期買い集め検知（旧・生カウント方式）──
+# z値方式(periodic_buy_zscore)に置き換えたため既定は無効。
+# 生の「10秒差ペア数」で判定するため流動性の高い銘柄でノイズが多い。
+# 比較検証したいときだけ true にする（併用すると通知が重複する）。
 # 詳細: ../periodic_buy_rss/README.md
 periodic_buy_rss:
-  enabled: true
+  enabled: false
   connect_retry_seconds: 60   # Excel未起動時の再試行間隔（秒）
   max_connect_retries: 10     # 再試行回数。既定は10分ぶん待ってから諦める
   config_path: null           # ツール側のconfig。null=../periodic_buy_rss/config.yaml
+
+# ── 定期買い集め検知（z値方式・現行）──
+# 「約定のちょうど10秒後の買い」が他のラグ(6〜14秒)と比べて統計的に突出している銘柄を通知。
+# kabuステーションAPIの歩み値を使うためExcel・マーケットスピードIIは不要。
+# 詳細: ../periodic_buy_zscore/README.md
+periodic_buy_zscore:
+  enabled: true
+  config_path: null     # ツール側のconfig。null=../periodic_buy_zscore/config.yaml

@@ -102,12 +102,22 @@ def parse_hhmm(s: str):
 
 
 def parse_trade_time(time_str: str, now: datetime) -> datetime:
-    """歩み値の時刻文字列を当日日付つきの datetime にする。
+    """歩み値の時刻文字列を datetime にする。
 
-    "HH:MM:SS" / "HH:MM:SS.ff" / Excelシリアル値の文字列など環境差に耐える。
+    kabu /timeandsales は ISO8601（"2026-08-10T15:30:00+09:00"）で**日付付き**なので
+    そのまま解釈する。RSS（Excel）は "HH:MM:SS" と日付が無いため当日日付を補う。
     パースできなければ None を返す（呼び出し側でスキップ）。
     """
     s = str(time_str).strip()
+    # ISO8601（日付・タイムゾーン付き）を最優先で試す
+    if "T" in s and "-" in s[:11]:
+        try:
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None and now.tzinfo is not None:
+                dt = dt.replace(tzinfo=now.tzinfo)
+            return dt
+        except ValueError:
+            pass
     for fmt in ("%H:%M:%S", "%H:%M:%S.%f", "%Y/%m/%d %H:%M:%S", "%H:%M"):
         try:
             t = datetime.strptime(s, fmt)
@@ -213,7 +223,8 @@ def main():
 
 
 def run_loop(config_path: str, log=None, notify_fn=None, stop_event=None,
-             connect_retry_seconds: float = 60.0, max_connect_retries: int = 10):
+             connect_retry_seconds: float = 60.0, max_connect_retries: int = 10,
+             kabu_client=None):
     """歩み値のポーリングループを実行する（統合ランナーからも呼べるよう切り出し）。
 
     log: 使用するロガー（未指定なら本ツール専用）
@@ -242,28 +253,46 @@ def run_loop(config_path: str, log=None, notify_fn=None, stop_event=None,
     session_start = parse_hhmm(rss.get("session_start", "09:00"))
     session_end = parse_hhmm(rss.get("session_end", "15:30"))
     feeder = Feeder(detector, session_start=session_start, session_end=session_end)
-    reader = ms2_rss.MarketSpeedTickReader(
-        symbols=symbols,
-        market_suffix=rss.get("market_suffix", "T"),
-        tick_count=rss.get("tick_count", 300),
-        sheet_name=rss.get("sheet_name", "TICKS"),
-        anchor_row=rss.get("anchor_row", 1),
-        cols_per_symbol=rss.get("cols_per_symbol", 4),
-        newest_first=rss.get("newest_first", True),
-        workbook_name=rss.get("workbook_name"),
-        com_retries=rss.get("com_retries", 60),
-        com_retry_delay=rss.get("com_retry_delay", 0.25),
-    )
-    poll_interval = rss.get("poll_interval_seconds", 1.0)
+    source_kind = str(config.get("source", "kabu")).lower()
+    if source_kind == "kabu":
+        # kabuステーションAPIの歩み値を使う（Excel・MS2は不要）
+        import kabu_tick_source
+        kb = config.get("kabu", {})
+        reader = kabu_tick_source.KabuTickSource(
+            client=kabu_client, symbols=[s for s, _ in symbols] if symbols
+            and isinstance(symbols[0], tuple) else symbols,
+            exchange=kb.get("exchange", 1), log=log)
+        poll_interval = kb.get("poll_interval_seconds", 1.0)
+    else:
+        reader = ms2_rss.MarketSpeedTickReader(
+            symbols=symbols,
+            market_suffix=rss.get("market_suffix", "T"),
+            tick_count=rss.get("tick_count", 300),
+            sheet_name=rss.get("sheet_name", "TICKS"),
+            anchor_row=rss.get("anchor_row", 1),
+            cols_per_symbol=rss.get("cols_per_symbol", 4),
+            newest_first=rss.get("newest_first", True),
+            workbook_name=rss.get("workbook_name"),
+            com_retries=rss.get("com_retries", 60),
+            com_retry_delay=rss.get("com_retry_delay", 0.25),
+        )
+        poll_interval = rss.get("poll_interval_seconds", 1.0)
 
-    log.info("定期買い集め検知(RSS) 起動。監視銘柄: %d件、ポーリング間隔: %.1f秒",
-             len(symbols), poll_interval)
+    log.info("定期買い集め検知 起動（取得元: %s）。監視銘柄: %d件、"
+             "1銘柄あたりの間隔: %.1f秒（1周およそ%.0f秒）",
+             "kabu歩み値API" if source_kind == "kabu" else "楽天MS2 RSS",
+             len(symbols), poll_interval, len(symbols) * poll_interval)
 
     def stopped():
         return stop_event is not None and stop_event.is_set()
 
-    # Excel（MS2 RSS）への接続。まだ起動していない場合に備えて再試行する
-    for attempt in range(1, max_connect_retries + 1):
+    if source_kind == "kabu" and kabu_client is None:
+        log.error("取得元にkabuを指定していますが、kabuクライアントが渡されていません。"
+                  "統合ランナーから起動するか、config の source を rss にしてください")
+        return
+
+    # 接続。kabuは事前準備不要なので1回で済む。RSSはExcel未起動に備えて再試行する
+    for attempt in range(1, (1 if source_kind == "kabu" else max_connect_retries) + 1):
         if stopped():
             return
         try:
@@ -281,9 +310,10 @@ def run_loop(config_path: str, log=None, notify_fn=None, stop_event=None,
                 stop_event.wait(connect_retry_seconds)
             else:
                 time.sleep(connect_retry_seconds)
-    log.info("Excel(マーケットスピードII RSS)への接続に成功しました。数式を書き込みました。")
-    log.info("RssTickListの初回反映を待機します（数秒）...")
-    time.sleep(rss.get("warmup_seconds", 5))
+    if source_kind == "rss":
+        log.info("Excel(マーケットスピードII RSS)への接続に成功しました。数式を書き込みました。")
+        log.info("RssTickListの初回反映を待機します（数秒）...")
+        time.sleep(rss.get("warmup_seconds", 5))
 
     def emit(alert):
         if notify_fn is not None:
@@ -342,26 +372,31 @@ def run_loop(config_path: str, log=None, notify_fn=None, stop_event=None,
         if summary_interval > 0 and cycle_start - last_summary >= summary_interval:
             log_summary()
             last_summary = cycle_start
-        now = datetime.now().astimezone()
+        # 銘柄ごとに間隔を空けて読む。
+        # kabu歩み値APIはレート制限があるが、毎回その日の全件が返るため
+        # 間隔を空けても取りこぼしはなく、検知が遅れるだけ。
         for sym in symbols:
             if stopped():
                 break
+            now = datetime.now().astimezone()
+            if not in_session(now.time()):
+                break
+            t0 = time.time()
             try:
                 batch = reader.read(sym)
             except Exception:
                 log.exception("銘柄 %s の読み取りに失敗しました", sym)
-                continue
+                batch = []
             if debug_remaining > 0 and batch:
-                log.info("[DEBUG BATCH] %s 直近3件: %s", sym, batch[-3:])
+                log.info("[DEBUG BATCH] %s %d件 直近3件: %s", sym, len(batch), batch[-3:])
                 debug_remaining -= 1
             for alert in feeder.process_batch(sym, batch, now):
                 emit(alert)
-        elapsed = time.time() - cycle_start
-        wait = max(0.0, poll_interval - elapsed)
-        if stop_event is not None:
-            stop_event.wait(wait)
-        else:
-            time.sleep(wait)
+            wait = max(0.0, poll_interval - (time.time() - t0))
+            if stop_event is not None:
+                stop_event.wait(wait)
+            else:
+                time.sleep(wait)
 
 
 if __name__ == "__main__":
