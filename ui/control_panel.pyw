@@ -39,8 +39,9 @@ import runner_control                               # noqa: E402
 import symbols_update                               # noqa: E402
 from theme import (BG, BORDER, BORDER_LT, FONTS, GREEN, GREEN_BG,   # noqa: E402
                    GREEN_DIM, LOG_BG, ORANGE, ORANGE_BG, PANEL, PANEL_ALT,
-                   RED, RED_BG, RED_SOLID, TEXT, TEXT_DIM, TEXT_MUTE,
-                   Chip, FlatButton, hsep, init_fonts, section_label, vsep)
+                   PANEL_DEEP, RED, RED_BG, RED_SOLID, TEXT, TEXT_DIM,
+                   TEXT_MUTE, Chip, FlatButton, hsep, init_fonts,
+                   section_label, vsep)
 
 ROOT = runner_control.repo_root()
 RUNNER_CONFIG = os.path.join(ROOT, "strategies", "runner", "config.yaml")
@@ -69,7 +70,36 @@ AI_STRATEGIES = [
     ("複合シグナル",   "confluence",         ("strategies", "confluence")),
 ]
 
+# 実弾で動かす戦略（autotrade/config.yaml の strategies）。
+# 自動売買が発注するのはAI戦略のENTRYシグナルを受けたときだけなので、
+# 実売買の対象になり得るのはこの3つだけ（AI_STRATEGIES と同じ顔ぶれ）。
+AT_STRATEGIES = [
+    ("午後引け戻り", "afternoon_reversal"),
+    ("投げ売り反発", "panic_rebound"),
+    ("複合シグナル", "confluence"),
+]
+
+# 資金上限（autotrade/config.yaml の capital）
+AT_AMOUNTS = [
+    ("使用上限額",   "max_use_amount"),
+    ("1銘柄あたり",  "max_amount_per_symbol"),
+]
+
+# 全角数字・桁区切り・単位を混ぜて入力されても受け付ける
+_AMOUNT_TRANS = str.maketrans("０１２３４５６７８９，", "0123456789,")
+
 _LOGLINE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+(\d{2}:\d{2}:\d{2})[,.]?\d*\s+\[(\w+)\]\s*(.*)$")
+
+
+def parse_amount(text: str) -> int:
+    """「70,000」「７００００」「70000円」などを 70000 にする。"""
+    s = str(text).translate(_AMOUNT_TRANS)
+    for ch in (",", "円", " ", "　", "\t"):
+        s = s.replace(ch, "")
+    s = s.strip()
+    if not s.isdigit():
+        raise ValueError("金額は0以上の整数で入力してください")
+    return int(s)
 
 
 def yen(v, sign=False):
@@ -331,6 +361,38 @@ class ControlPanel:
         self.at_dryrun_val = self._toggle_card(
             cards, 2, "dry_run", lambda: self.toggle_autotrade("dry_run"))
 
+        # ── 実売買に使う戦略 ──
+        section_label(f, "実売買に使う戦略（チェックした戦略だけが実際に発注する）").pack(
+            fill="x", pady=(15, 8))
+        sg = tk.Frame(f, bg=PANEL)
+        sg.pack(fill="x")
+        self.at_chips = {}
+        for c in range(len(AT_STRATEGIES)):
+            sg.columnconfigure(c * 2, weight=1, uniform="atchip")
+        for i, (label, key) in enumerate(AT_STRATEGIES):
+            chip = Chip(sg, label, False, command=self._on_at_chip)
+            chip.grid(row=0, column=i * 2, sticky="ew")
+            chip.key = key
+            self.at_chips[key] = chip
+            if i < len(AT_STRATEGIES) - 1:
+                tk.Frame(sg, bg=PANEL, width=12).grid(row=0, column=i * 2 + 1)
+
+        # ── 資金上限 ──
+        section_label(f, "資金上限（残高を参照し、この金額を超えない範囲で数量を決める）").pack(
+            fill="x", pady=(15, 8))
+        ag = tk.Frame(f, bg=PANEL)
+        ag.pack(fill="x")
+        ag.columnconfigure(0, weight=1, uniform="amt")
+        ag.columnconfigure(2, weight=1, uniform="amt")
+        self.amount_entries = {}
+        self._amount_shown = {}
+        for i, (label, key) in enumerate(AT_AMOUNTS):
+            self.amount_entries[key] = self._amount_card(ag, i * 2, label)
+        tk.Frame(ag, bg=PANEL, width=14).grid(row=0, column=1)
+        self.btn_amount = FlatButton(ag, "保存", command=self.save_amounts,
+                                     pady=20, padx=18)
+        self.btn_amount.grid(row=0, column=4, padx=(14, 0), sticky="ns")
+
         self.btn_panic = FlatButton(f, "緊急停止", command=self.emergency_stop,
                                     solid=RED_SOLID, border=RED_SOLID,
                                     font=FONTS["bodyb"], pady=12)
@@ -353,6 +415,29 @@ class ControlPanel:
                        font=FONTS["bodyb"], anchor="w")
         val.pack(fill="x", pady=(2, 0))
         return val
+
+    def _amount_card(self, parent, col, label):
+        """金額の入力欄。入力できることが見て分かるよう、枠付きの暗い入力箱にする。"""
+        outer = tk.Frame(parent, bg=BORDER)
+        outer.grid(row=0, column=col, sticky="ew")
+        inner = tk.Frame(outer, bg=PANEL_ALT)
+        inner.pack(fill="both", expand=True, padx=1, pady=1)
+        pad = tk.Frame(inner, bg=PANEL_ALT)
+        pad.pack(fill="x", padx=14, pady=11)
+        tk.Label(pad, text=label, bg=PANEL_ALT, fg=TEXT_DIM,
+                 font=FONTS["label"], anchor="w").pack(fill="x")
+        row = tk.Frame(pad, bg=PANEL_ALT)
+        row.pack(fill="x", pady=(4, 0))
+        tk.Label(row, text="円", bg=PANEL_ALT, fg=TEXT_DIM,
+                 font=FONTS["label"]).pack(side="right", padx=(8, 0))
+        box = tk.Frame(row, bg=BORDER_LT)
+        box.pack(side="left", fill="x", expand=True)
+        ent = tk.Entry(box, bg=PANEL_DEEP, fg=TEXT, font=FONTS["num"], bd=0,
+                       highlightthickness=0, insertbackground=TEXT, justify="right")
+        ent.pack(fill="x", padx=1, pady=1, ipady=4, ipadx=8)
+        ent.bind("<KeyRelease>", lambda _e: self._refresh_amount_button())
+        ent.bind("<Return>", lambda _e: self.save_amounts())
+        return ent
 
     # ── ログ ──
     def _build_log(self, parent):
@@ -455,6 +540,14 @@ class ControlPanel:
             out[key] = self._strategy_value(path)
         return out
 
+    def _at_strategy_values(self) -> dict:
+        s = self._autotrade_cfg().get("strategies") or {}
+        return {k: bool(s.get(k)) for _l, k in AT_STRATEGIES}
+
+    def _at_amount_values(self) -> dict:
+        cap = self._autotrade_cfg().get("capital") or {}
+        return {k: cap.get(k) for _l, k in AT_AMOUNTS}
+
     def _snapshot_applied(self) -> dict:
         """ランナー起動時点の設定を控える（未反映バンドの判定基準）。"""
         at = self._autotrade_cfg()
@@ -463,6 +556,8 @@ class ControlPanel:
             "symbols": config_io.file_digest(SYMBOLS_YAML),
             "at_enabled": bool(at.get("enabled")),
             "at_dry_run": bool(at.get("dry_run", True)),
+            "at_strategies": self._at_strategy_values(),
+            "at_amounts": self._at_amount_values(),
         }
 
     def _pending(self):
@@ -490,6 +585,18 @@ class ControlPanel:
         if (bool(at.get("enabled")) != self.applied["at_enabled"]
                 or bool(at.get("dry_run", True)) != self.applied["at_dry_run"]):
             reasons.append("自動売買 enabled/dry_run")
+
+        # 実売買の対象戦略（キーがrunner側と重なるので "at:" を付けて区別する）
+        at_now = self._at_strategy_values()
+        at_names = {k: l for l, k in AT_STRATEGIES}
+        at_changed = [k for k, v in at_now.items()
+                      if self.applied["at_strategies"].get(k) != v]
+        if at_changed:
+            keys |= {f"at:{k}" for k in at_changed}
+            reasons.append("実売買対象 " + "・".join(at_names[k] for k in at_changed))
+
+        if self._at_amount_values() != self.applied["at_amounts"]:
+            reasons.append("資金上限")
         return reasons, keys
 
     # ══════════════════════════════════════════════════════════════
@@ -509,6 +616,101 @@ class ControlPanel:
                          f"{'ON' if new_value else 'OFF'} にしました "
                          f"(strategies/runner/config.yaml)")
         self._refresh_ui()
+
+    def _on_at_chip(self, chip, new_value):
+        """実売買に使う戦略の切り替え（autotrade/config.yaml の strategies）。"""
+        if self.busy:
+            return
+        label = next(l for l, k in AT_STRATEGIES if k == chip.key)
+        at = self._autotrade_cfg()
+        if new_value:
+            # ONにする操作は「その戦略が実弾で動く」という意味になるので、
+            # 今の enabled / dry_run と合わせて何が起きるかを明示して確認する
+            live = at.get("enabled") and not at.get("dry_run", True)
+            msg = f"「{label}」を実売買の対象にします。\n\n"
+            if live:
+                msg += ("現在 enabled: true / dry_run: false です。\n"
+                        "★次回のランナー起動から、この戦略のシグナルで実際に発注されます★\n\n")
+            elif at.get("enabled"):
+                msg += "現在 dry_run: true のため、発注内容のログ出力だけです。\n\n"
+            else:
+                msg += "現在 enabled: false のため、まだ発注はされません。\n\n"
+            msg += "対象にしますか？"
+            if not messagebox.askyesno("実売買の対象に追加", msg, parent=self.root,
+                                       icon="warning"):
+                return
+        try:
+            config_io.set_child_bool(AUTOTRADE_CONFIG, "strategies", chip.key, new_value)
+        except Exception as e:
+            messagebox.showerror("設定の書き換えに失敗", str(e), parent=self.root)
+            return
+        self._reload_configs(force=True)
+        self._append_log(f"[コントロールパネル] 実売買の対象: {label} を "
+                         f"{'ON' if new_value else 'OFF'} にしました "
+                         f"(strategies/autotrade/config.yaml)")
+        self._refresh_ui()
+
+    def save_amounts(self):
+        """資金上限（capital.max_use_amount / max_amount_per_symbol）を保存する。"""
+        if self.busy:
+            return
+        cap = (self._autotrade_cfg().get("capital") or {})
+        try:
+            values = {k: parse_amount(self.amount_entries[k].get())
+                      for _l, k in AT_AMOUNTS}
+        except ValueError as e:
+            messagebox.showerror("資金上限", str(e), parent=self.root)
+            return
+
+        if any(v <= 0 for v in values.values()):
+            messagebox.showerror("資金上限", "金額は1円以上で入力してください。",
+                                 parent=self.root)
+            return
+        if values["max_amount_per_symbol"] > values["max_use_amount"]:
+            messagebox.showerror(
+                "資金上限",
+                "1銘柄あたりの上限は、使用上限額以下にしてください。\n\n"
+                f"　使用上限額　　: {values['max_use_amount']:,}円\n"
+                f"　1銘柄あたり　 : {values['max_amount_per_symbol']:,}円",
+                parent=self.root)
+            return
+
+        changed = {k: v for k, v in values.items() if cap.get(k) != v}
+        if not changed:
+            self._refresh_amount_button()
+            return
+
+        def fmt(v):
+            return f"{int(v):,}円" if isinstance(v, (int, float)) else "—"
+
+        lines = "\n".join(f"　{l}　: {fmt(cap.get(k))}  →  {values[k]:,}円"
+                          for l, k in AT_AMOUNTS if k in changed)
+        if not messagebox.askyesno(
+                "資金上限の変更",
+                "自動売買が使う金額の上限を変更します。\n"
+                "1回の発注数量がこの金額から決まります。\n\n" + lines + "\n\n変更しますか？",
+                parent=self.root, icon="warning"):
+            return
+
+        try:
+            for k, v in changed.items():
+                config_io.set_child_number(AUTOTRADE_CONFIG, "capital", k, v)
+        except Exception as e:
+            messagebox.showerror("設定の書き換えに失敗", str(e), parent=self.root)
+            return
+        self._reload_configs(force=True)
+        for _l, k in AT_AMOUNTS:
+            self._amount_shown.pop(k, None)      # ファイルの値で描き直させる
+        self._append_log("[コントロールパネル] 資金上限を変更しました: "
+                         + " / ".join(f"{l} {values[k]:,}円" for l, k in AT_AMOUNTS))
+        self._refresh_ui()
+
+    def _refresh_amount_button(self):
+        """未保存の入力があるあいだ「保存」を橙にする。"""
+        dirty = any(self.amount_entries[k].get().strip() != self._amount_shown.get(k, "")
+                    for _l, k in AT_AMOUNTS)
+        self.btn_amount.set_text("保存 *" if dirty else "保存")
+        self.btn_amount.set_accent(ORANGE if dirty else None)
 
     def toggle_autotrade(self, key: str):
         if self.busy:
@@ -874,6 +1076,30 @@ class ControlPanel:
             self.at_badge.configure(text="有効・DRY-RUN", bg="#3A2A0E", fg=ORANGE)
         else:
             self.at_badge.configure(text="★実発注★", bg=RED_BG, fg=RED)
+
+        # 実売買に使う戦略
+        at_values = self._at_strategy_values()
+        for key, chip in self.at_chips.items():
+            chip.set_value(at_values.get(key, False), dirty=(f"at:{key}" in pending_keys))
+            chip.set_enabled(not self.busy)
+
+        # 資金上限（入力中の欄は上書きしない）
+        amounts = self._at_amount_values()
+        for _l, key in AT_AMOUNTS:
+            ent = self.amount_entries[key]
+            ent.configure(state="normal")     # disabled のままだと書き換えられない
+            v = amounts.get(key)
+            text = f"{int(v):,}" if isinstance(v, (int, float)) else ""
+            shown = self._amount_shown.get(key)
+            if shown is None or ent.get().strip() == shown:
+                if ent.get() != text:
+                    ent.delete(0, "end")
+                    ent.insert(0, text)
+                self._amount_shown[key] = text
+            if self.busy:
+                ent.configure(state="disabled")
+        self.btn_amount.set_enabled(not self.busy)
+        self._refresh_amount_button()
 
         # ボタンの活殺
         self.btn_start.set_enabled(not self.busy and not running)

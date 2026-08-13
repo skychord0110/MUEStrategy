@@ -1,0 +1,5 @@
+# Windowsのバッチファイルは CRLF でないと cmd.exe が行を正しく区切れない。
+# LFのままだと rem のコメント行がコマンドとして実行され、起動処理まで到達しない
+# （実測: コントロールパネル.bat が LF のとき、pythonw を起動する行が実行されなかった）。
+*.bat text eol=crlf
+*.cmd text eol=crlf

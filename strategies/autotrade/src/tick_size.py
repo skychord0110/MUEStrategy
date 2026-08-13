@@ -107,20 +107,21 @@ def shift_ticks(price, ticks: int, price_range_group=DEFAULT_GROUP) -> Decimal:
 
     刻みが変わる水準をまたぐ場合に備え、1ティックずつ動かして都度単位を引き直す。
     例: 10003グループで1000円から+1ティック → 1000円は0.1円刻みなので1000.1円。
+
+    水準の境界では、動かした先が別の刻み水準に入ることがある。その場合は
+    移動方向に合わせて新しい水準の刻みに乗せ直す。
+    例: 5,000円は5円刻みだが、5,000円超は10円刻みなので
+        5000 +1ティック は 5005 ではなく 5010（5005は取引所が受け付けない値段）。
     """
     p = round_to_tick(price, price_range_group, "nearest")
     step = 1 if ticks >= 0 else -1
     for _ in range(abs(int(ticks))):
         unit = tick_size(p, price_range_group)
-        if step < 0:
-            # 下げるときは「1つ下の刻み水準」に入る場合があるので、
-            # 動かした後の価格で単位を引き直す（境界での刻み違いを吸収）
-            nxt = p - unit
-            if nxt > 0 and tick_size(nxt, price_range_group) != unit:
-                nxt = round_to_tick(nxt, price_range_group, "down")
-            p = nxt
-        else:
-            p = p + unit
+        nxt = p + unit if step > 0 else p - unit
+        if nxt > 0 and tick_size(nxt, price_range_group) != unit:
+            # 別の刻み水準に入った → その水準の刻みに乗せ直す
+            nxt = round_to_tick(nxt, price_range_group, "up" if step > 0 else "down")
+        p = nxt
         if p <= 0:
             return Decimal("0")
     return p

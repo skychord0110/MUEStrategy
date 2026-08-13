@@ -132,6 +132,17 @@ class FlatButton(tk.Frame):
     def set_text(self, text):
         self.inner.configure(text=text)
 
+    def set_accent(self, color=None):
+        """枠と文字の色を一時的に変える（未保存の入力を橙で示す用途）。
+        None を渡すと元の色に戻る。"""
+        if not hasattr(self, "_base_fg"):
+            self._base_fg, self._base_border = self._fg, self._border
+        self._fg = color or self._base_fg
+        self._border = color or self._base_border
+        if self._enabled:
+            self.inner.configure(fg=self._fg)
+            self.configure(bg=self._border)
+
     def set_enabled(self, on: bool):
         """無効時は文字と枠を沈める（押しても何も起きないことが見て分かるように）。"""
         self._enabled = bool(on)

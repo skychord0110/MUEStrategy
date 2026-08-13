@@ -15,6 +15,8 @@ import yaml
 
 _BOOL_LINE = re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z_][\w]*)\s*:\s*"
                         r"(?P<val>true|false)\b(?P<rest>.*)$")
+_NUM_LINE = re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z_][\w]*)\s*:\s*"
+                       r"(?P<val>-?\d[\d_]*(?:\.\d+)?)(?P<rest>.*)$")
 _KEY_LINE = re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z_][\w]*)\s*:\s*(?P<rest>.*)$")
 
 
@@ -62,17 +64,23 @@ def _block_end(lines, start: int, indent: int):
     return len(lines)
 
 
-def _set_bool_at(lines, i: int, value: bool):
-    # 改行はCRLF/LFのどちらもあり得るので、元の行の改行をそのまま戻す。
-    # rstrip("\n") だけだと CRLF の \r が rest 側に紛れ込んで行が壊れる。
+def _replace_value_at(lines, i: int, new_text: str, regex, what: str):
+    """値の部分だけを差し替える（行末コメントと字下げはそのまま）。
+
+    改行はCRLF/LFのどちらもあり得るので、元の行の改行をそのまま戻す。
+    rstrip("\\n") だけだと CRLF の \\r が rest 側に紛れ込んで行が壊れる。
+    """
     raw = lines[i]
     body = raw.rstrip("\r\n")
     nl = raw[len(body):]
-    m = _BOOL_LINE.match(body)
+    m = regex.match(body)
     if not m:
-        raise ConfigEditError(f"{i + 1}行目が true/false の行ではありません: {raw!r}")
-    lines[i] = (f"{m.group('indent')}{m.group('key')}: "
-                f"{'true' if value else 'false'}{m.group('rest')}{nl}")
+        raise ConfigEditError(f"{i + 1}行目が{what}の行ではありません: {raw!r}")
+    lines[i] = f"{m.group('indent')}{m.group('key')}: {new_text}{m.group('rest')}{nl}"
+
+
+def _set_bool_at(lines, i: int, value: bool):
+    _replace_value_at(lines, i, "true" if value else "false", _BOOL_LINE, " true/false")
 
 
 def set_nested_enabled(path: str, section: str, value: bool) -> None:
@@ -117,6 +125,25 @@ def set_child_bool(path: str, parent: str, key: str, value: bool) -> None:
     if i is None:
         raise ConfigEditError(f"{parent}: の中に {key}: がありません")
     _set_bool_at(lines, i, value)
+    _write_lines(path, lines)
+
+
+def set_child_number(path: str, parent: str, key: str, value) -> None:
+    """`parent:` ブロック直下の数値を書き換える（例: capital > max_use_amount）。
+
+    intは桁区切りなしの整数として書く（YAMLの `1_000` 表記は使わない）。
+    """
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = str(int(value)) if isinstance(value, int) else repr(float(value))
+    lines = _read_lines(path)
+    p = _find_key(lines, parent, indent=0)
+    if p is None:
+        raise ConfigEditError(f"{os.path.basename(path)} に {parent}: がありません")
+    i = _find_key(lines, key, start=p + 1, end=_block_end(lines, p, 0))
+    if i is None:
+        raise ConfigEditError(f"{parent}: の中に {key}: がありません")
+    _replace_value_at(lines, i, text, _NUM_LINE, "数値")
     _write_lines(path, lines)
 
 
