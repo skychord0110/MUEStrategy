@@ -3,7 +3,20 @@
 仕様は公式リファレンスに準拠する。
 - https://kabucom.github.io/kabusapi/reference/index.html
 - https://kabucom.github.io/kabusapi/ptal/push.html
+
+【リクエストは直列化する】
+このクライアントは複数のスレッドから使われる（PUSH処理・自動売買・口座スナップショット・
+定期買い集め検知）。kabuステーションは同時リクエストに弱く、実測（2026-08-14 13:30）では
+発注中に別スレッドが /wallet/cash を叩いた結果、
+  ・/sendorder が13.6秒かかって 500
+  ・/wallet/cash が10秒でタイムアウト
+  ・WebSocketが強制切断（WinError 10054）
+が同時に起きた。仕様上、流量超過なら 429 が返るはずなので、これは流量制限ではなく
+kabuステーション側が捌けなかったものと考えられる。
+そこで内部ロックで1リクエストずつ順番に投げる。
 """
+import threading
+
 import requests
 
 PORTS = {"production": 18080, "demo": 18081}
@@ -19,9 +32,25 @@ class KabuClient:
         self.ws_url = f"ws://localhost:{self.port}/kabusapi/websocket"
         self._api_password = api_password
         self.token = None
+        # 同時リクエストを避けるためのロック（上の説明を参照）
+        self._lock = threading.RLock()
+
+    @property
+    def busy(self) -> bool:
+        """いま別のスレッドがリクエスト中か。
+
+        待ってまで実行する必要のない処理（口座スナップショットなど）が
+        「この回は飛ばす」判断をするために使う。
+        """
+        if self._lock.acquire(blocking=False):
+            self._lock.release()
+            return False
+        return True
 
     def authenticate(self) -> str:
-        resp = requests.post(f"{self.base_url}/token", json={"APIPassword": self._api_password}, timeout=10)
+        with self._lock:
+            resp = requests.post(f"{self.base_url}/token",
+                                 json={"APIPassword": self._api_password}, timeout=10)
         if resp.status_code == 401:
             # APIが返すエラー本文（Code/Message）を添えて分かりやすく通知する
             try:
@@ -47,7 +76,9 @@ class KabuClient:
         return {"Content-Type": "application/json", "X-API-KEY": self.token}
 
     def unregister_all(self) -> None:
-        resp = requests.put(f"{self.base_url}/unregister/all", headers=self._headers(), timeout=10)
+        with self._lock:
+            resp = requests.put(f"{self.base_url}/unregister/all",
+                                headers=self._headers(), timeout=10)
         resp.raise_for_status()
 
     def register_symbols(self, symbols: list) -> dict:
@@ -55,14 +86,18 @@ class KabuClient:
         if len(symbols) > 50:
             raise ValueError("kabuステーションAPIのPUSH配信は最大50銘柄までです")
         body = {"Symbols": [{"Symbol": s["symbol"], "Exchange": s["exchange"]} for s in symbols]}
-        resp = requests.put(f"{self.base_url}/register", json=body, headers=self._headers(), timeout=10)
+        with self._lock:
+            resp = requests.put(f"{self.base_url}/register", json=body,
+                                headers=self._headers(), timeout=10)
         resp.raise_for_status()
         return resp.json()
 
     # ── 以下は参照系（GET）のみ。発注・取消は含まない ──
 
     def _get(self, path: str, timeout: int = 10):
-        resp = requests.get(f"{self.base_url}{path}", headers=self._headers(), timeout=timeout)
+        with self._lock:
+            resp = requests.get(f"{self.base_url}{path}",
+                                headers=self._headers(), timeout=timeout)
         resp.raise_for_status()
         return resp.json()
 
@@ -140,8 +175,9 @@ class KabuClient:
         ⚠️ 実際に注文が発注される。呼び出し側で必ず安全弁を通すこと。
         レスポンス: {"Result": 0, "OrderId": "..."}  Result=0 が成功。
         """
-        resp = requests.post(f"{self.base_url}/sendorder", json=payload,
-                             headers=self._headers(), timeout=15)
+        with self._lock:
+            resp = requests.post(f"{self.base_url}/sendorder", json=payload,
+                                 headers=self._headers(), timeout=15)
         resp.raise_for_status()
         return resp.json()
 
@@ -150,8 +186,9 @@ class KabuClient:
 
         ⚠️ 実際に注文が取り消される。必須は OrderId のみ。
         """
-        resp = requests.put(f"{self.base_url}/cancelorder",
-                            json={"OrderId": str(order_id)},
-                            headers=self._headers(), timeout=15)
+        with self._lock:
+            resp = requests.put(f"{self.base_url}/cancelorder",
+                                json={"OrderId": str(order_id)},
+                                headers=self._headers(), timeout=15)
         resp.raise_for_status()
         return resp.json()

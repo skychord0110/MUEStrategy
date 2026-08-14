@@ -127,7 +127,19 @@ def start(client, cfg: dict, log, product: str = "2") -> threading.Thread:
 
     def loop():
         last_error = None
+        skipped = 0
         while True:
+            # 発注など他のリクエストが進行中なら、この回は飛ばす。
+            # クライアントのロックで順番待ちはできるが、待ってから実行すると
+            # 発注直後に余計なリクエストを重ねることになる。表示用の情報なので
+            # 1回飛ばして次の周期に回すほうが安全（実測の500の再発防止）。
+            if getattr(client, "busy", False):
+                skipped += 1
+                if skipped % 10 == 1:
+                    log.info("口座スナップショット: 他のリクエスト中のため見送り（累計%d回）",
+                             skipped)
+                time.sleep(interval)
+                continue
             try:
                 write(build(client, product))
                 last_error = None

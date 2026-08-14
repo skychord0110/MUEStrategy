@@ -268,6 +268,7 @@ class RunnerEngine:
     def __init__(self, config: dict):
         self.detectors = {}
         self.autotrader = None      # 自動売買。main()から差し込む（未設定なら仮想売買のみ）
+        self.autotrade_pump = None  # 自動売買の処理スレッド。未設定ならこのスレッドで同期処理
         strategies_cfg = config.get("strategies", {})
 
         sl = strategies_cfg.get("small_lot_sell_detector", {})
@@ -409,17 +410,27 @@ class RunnerEngine:
                     for alert in strat.on_signal(base_name, base_alert, now):
                         results.append((name, alert))
 
-        # 自動売買: 建玉の執行（板の更新ごと）とエントリー判定
-        # 例外が出てもPUSH処理と仮想売買は止めない
+        # 自動売買: 板とシグナルを専用スレッドに渡すだけにする。
+        # ここでAPIを呼ぶと、発注の応答を待つあいだPUSHの受信が丸ごと止まる
+        # （詳細と実測: ../../autotrade/src/pump.py）。
+        # 例外が出てもPUSH処理と仮想売買は止めない。
         if self.autotrader is not None:
             try:
                 sell1_price = sell_levels[0][0] if sell_levels else None
-                self.autotrader.on_tick(symbol, current_price, buy1_price,
-                                        sell1_price, now)
-                for name, alert in results:
-                    if name in self.ai_strategies and alert.get("type") == "ENTRY":
+                entries = [(name, alert) for name, alert in results
+                           if name in self.ai_strategies and alert.get("type") == "ENTRY"]
+                if self.autotrade_pump is not None:
+                    self.autotrade_pump.submit_tick(symbol, current_price, buy1_price,
+                                                    sell1_price, now)
+                    for name, alert in entries:
+                        self.autotrade_pump.submit_signal(name, alert, now)
+                else:
+                    # pumpを使わない場合（単体テストなど）は従来どおり同期で処理する
+                    self.autotrader.on_tick(symbol, current_price, buy1_price,
+                                            sell1_price, now)
+                    for name, alert in entries:
                         self.autotrader.on_signal(name, alert, now)
-                self.autotrader.poll(now)
+                    self.autotrader.poll(now)
             except Exception:
                 logging.getLogger("runner").exception(
                     "自動売買の処理でエラー（ランナーは継続します）")
@@ -504,6 +515,11 @@ def main():
         except Exception:
             log.exception("自動売買の初期化に失敗したため無効にします")
             engine.autotrader = None
+        if engine.autotrader is not None:
+            # 発注はこの専用スレッドで行う。PUSH受信スレッドをブロックさせないため
+            import pump as at_pump
+            engine.autotrade_pump = at_pump.AutoTradePump(engine.autotrader, log)
+            engine.autotrade_pump.start()
 
     debug_remaining = [config.get("debug_raw_messages", 0)]
 
@@ -579,6 +595,13 @@ def main():
             stop.wait(0.5)               # 短く待ち直して停止要求を取りこぼさない
     except KeyboardInterrupt:
         stop.set()
+
+    # 処理待ちの発注を投げ捨てないよう、自動売買スレッドを先に止める
+    if engine.autotrade_pump is not None:
+        ticks, sigs = engine.autotrade_pump.pending()
+        if sigs:
+            log.warning("自動売買の未処理シグナルが%d件あります。処理してから終了します", sigs)
+        engine.autotrade_pump.stop()
 
     # 古い口座情報をコントロールパネルが表示し続けないよう消しておく。
     # 銘柄登録は解除しない（他のツールが同じ登録を使うため）。

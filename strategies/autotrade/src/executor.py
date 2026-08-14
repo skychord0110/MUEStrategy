@@ -10,9 +10,21 @@
    実弾を動かす前に必ず dry_run のログで注文内容を確認すること。
 """
 import logging
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 
 import order_builder as ob
+
+
+def _parse_time(s):
+    """/orders の RecvTime（ISO8601）を datetime にする。読めなければ None。"""
+    if not s:
+        return None
+    try:
+        t = datetime.fromisoformat(str(s))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.astimezone()
 
 # 注文状態（GET /orders の State）
 STATE_WAITING = 1      # 待機
@@ -111,10 +123,22 @@ class Executor:
         # ── ここから実送信 ──
         self.log.warning("%s[実発注] %s", tag, desc)
         self.log.info("%s        ボディ: %s", tag, payload)
+        sent_at = datetime.now().astimezone()
         try:
             result = self._send_real(payload)
         except Exception as e:
+            # タイムアウト・500 などは「送れなかった」とは限らない。
+            # kabuステーション側で受け付け済みかもしれないので必ず突き合わせる。
             self.log.exception("%s[実発注 失敗] %s ← %s", tag, e, desc)
+            found = self.reconcile(order, sent_at, tag)
+            if found is not None:
+                self._record(order, now, is_entry)
+                oid = str(found.get("ID"))
+                self.sent.append({"time": now, "order": order, "result": found,
+                                  "order_id": oid, "reconciled": True})
+                self.open_orders[oid] = {"order": order, "time": now,
+                                         "strategy": strategy}
+                return {"Result": 0, "OrderId": oid, "reconciled": True}
             return {"error": str(e)}
 
         # Result=0 が成功。それ以外はエラーコード。
@@ -143,6 +167,57 @@ class Executor:
         if self.client is None:
             raise RuntimeError("kabuクライアントが渡されていないため発注できません")
         return self.client.send_order(payload)
+
+    # ── 発注失敗後の突き合わせ ──
+
+    def reconcile(self, order: dict, sent_at: datetime, tag: str = ""):
+        """送信が失敗扱いになった注文が、実は受け付けられていないか確認する。
+
+        【なぜ必要か】
+        HTTPのタイムアウトや500は「注文が出ていない」ことを意味しない。
+        リクエストは届いていて、応答だけが返らなかった可能性がある。
+        失敗と決めつけて何も記録しないと、実際には生きている注文を
+        誰も管理しないまま放置してしまう（約定しても損切りも利確もかからない）。
+
+        実測例（2026-08-14 13:30）: /sendorder が13.6秒かけて500を返した。
+        このときは注文が出ていなかったが、出ていた場合に気づけない作りだった。
+
+        見つかれば /orders の該当行を返す。見つからなければ None。
+        """
+        if self.client is None:
+            return None
+        symbol = str(order.get("Symbol"))
+        side = str(order.get("Side"))
+        qty = float(order.get("Qty") or 0)
+        product = "2" if int(order.get("CashMargin", 1)) == 1 else "3"
+        # 受付から /orders に載るまで少し間があるので数回試す
+        for attempt, wait in enumerate((0.0, 1.0, 2.0), start=1):
+            if wait:
+                time.sleep(wait)
+            try:
+                rows = self.client.get_orders(product=product, symbol=symbol) or []
+            except Exception as e:
+                self.log.warning("%s[突き合わせ] 注文照会に失敗（%d回目）: %s", tag, attempt, e)
+                continue
+            for o in rows:
+                if str(o.get("Symbol")) != symbol or str(o.get("Side")) != side:
+                    continue
+                if float(o.get("OrderQty") or 0) != qty:
+                    continue
+                recv = _parse_time(o.get("RecvTime"))
+                if recv is None or recv < sent_at - timedelta(seconds=30):
+                    continue          # 送信より前の注文＝別物
+                if str(o.get("ID")) in self.open_orders:
+                    continue          # 既に管理下にある
+                self.log.error(
+                    "%s[突き合わせ] ★送信は失敗扱いだったが、注文は受け付けられていた★ "
+                    "OrderId=%s 状態=%s 約定%s/%s株 → 管理下に置きます",
+                    tag, o.get("ID"), o.get("State"), o.get("CumQty"), o.get("OrderQty"))
+                return o
+            self.log.info("%s[突き合わせ] 該当する注文は見つからず（%d回目）", tag, attempt)
+        self.log.warning("%s[突き合わせ] 注文は出ていないと判断しました（%s %s株）",
+                         tag, symbol, qty)
+        return None
 
     # ── 取消 ──
 
