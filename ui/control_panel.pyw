@@ -38,9 +38,9 @@ import config_io                                    # noqa: E402
 import runner_control                               # noqa: E402
 import symbols_update                               # noqa: E402
 from theme import (BG, BORDER, BORDER_LT, FONTS, GREEN, GREEN_BG,   # noqa: E402
-                   GREEN_DIM, LOG_BG, ORANGE, ORANGE_BG, PANEL, PANEL_ALT,
-                   PANEL_DEEP, RED, RED_BG, RED_SOLID, TEXT, TEXT_DIM,
-                   TEXT_MUTE, Chip, FlatButton, hsep, init_fonts,
+                   GREEN_DIM, GREEN_LINE, LOG_BG, ORANGE, ORANGE_BG, PANEL,
+                   PANEL_ALT, PANEL_DEEP, RED, RED_BG, RED_SOLID, TEXT,
+                   TEXT_DIM, TEXT_MUTE, Chip, FlatButton, hsep, init_fonts,
                    section_label, vsep)
 
 ROOT = runner_control.repo_root()
@@ -176,9 +176,28 @@ class ControlPanel:
     def _build(self):
         card = tk.Frame(self.root, bg=BORDER)
         card.pack(fill="both", expand=True, padx=10, pady=10)
-        body = tk.Frame(card, bg=PANEL)
-        body.pack(fill="both", expand=True, padx=1, pady=1)
+        outer = tk.Frame(card, bg=PANEL)
+        outer.pack(fill="both", expand=True, padx=1, pady=1)
+
+        # 画面が低いと、下端の操作行（起動・停止・緊急停止）が押し出されて
+        # 見えなくなる。実測: 内容の必要高さ1144px に対し、1536x864の画面では
+        # ウィンドウが774pxしか取れない。そのため全体をスクロールできるようにし、
+        # 収まっているときはスクロールバーを出さない。
+        self._canvas = tk.Canvas(outer, bg=PANEL, bd=0, highlightthickness=0)
+        self._vbar = tk.Scrollbar(outer, orient="vertical", command=self._canvas.yview,
+                                  bg=PANEL_ALT, troughcolor=PANEL, bd=0,
+                                  highlightthickness=0, activebackground=BORDER_LT)
+        self._canvas.configure(yscrollcommand=self._on_scroll)
+        self._canvas.pack(side="left", fill="both", expand=True)
+
+        body = tk.Frame(self._canvas, bg=PANEL)
+        self._body_id = self._canvas.create_window((0, 0), window=body, anchor="nw")
         self.body = body
+        # bbox("all") はレイアウトが落ち着く前の値を返すことがあるので、
+        # 中身の必要高さから直接スクロール範囲を決める
+        body.bind("<Configure>", self._sync_scroll)
+        self._canvas.bind("<Configure>", self._sync_scroll)
+        self.root.bind_all("<MouseWheel>", self._on_wheel)
 
         self._build_header(body)
         hsep(body).pack(fill="x")
@@ -188,13 +207,43 @@ class ControlPanel:
         self.pos_sep = hsep(body)
         self.pos_sep.pack(fill="x")
         self._build_band(body)
-        self._build_runner(body)
+        self._build_symbols(body)
         hsep(body).pack(fill="x")
         self._build_strategies(body)
         hsep(body).pack(fill="x")
         self._build_autotrade(body)
         hsep(body).pack(fill="x")
+        # 起動・停止は自動売買の赤枠の外に置く。赤枠の中に入れると
+        # 「実弾セクションの操作」に見えるが、実際はランナー全体の操作のため。
+        self._build_actions(body)
+        hsep(body).pack(fill="x")
         self._build_log(body)
+
+    def _sync_scroll(self, _e=None):
+        w = self._canvas.winfo_width()
+        self._canvas.itemconfigure(self._body_id, width=w)
+        self._canvas.configure(scrollregion=(0, 0, w, self.body.winfo_reqheight()))
+
+    def _on_scroll(self, first, last):
+        """内容が収まっているときはスクロールバーを出さない。"""
+        # ここで yview を動かさないこと。yview_moveto がこのコールバックを
+        # 再び呼び、バーの表示が行ったり来たりする。
+        if float(first) <= 0.0 and float(last) >= 1.0:
+            self._vbar.pack_forget()
+        else:
+            self._vbar.pack(side="right", fill="y")
+            self._vbar.set(first, last)
+
+    def _on_wheel(self, event):
+        # ログ欄の上ではログ自身をスクロールさせる
+        try:
+            if self.root.winfo_containing(event.x_root, event.y_root) is self.log:
+                return
+        except (KeyError, tk.TclError):
+            pass
+        if self._canvas.yview() == (0.0, 1.0):
+            return
+        self._canvas.yview_scroll(-int(event.delta / 120), "units")
 
     # ── ヘッダ ──
     def _build_header(self, parent):
@@ -284,45 +333,43 @@ class ControlPanel:
                 text="・".join(reasons) + " — 反映するにはランナーを再起動してください")
         if want != self.band_shown:
             if want:
-                self.band.pack(fill="x", before=self.runner_sec)
+                self.band.pack(fill="x", before=self.sym_sec)
             else:
                 self.band.pack_forget()
             self.band_shown = want
 
-    # ── ランナー操作・銘柄リスト ──
-    def _build_runner(self, parent):
-        self.runner_sec = tk.Frame(parent, bg=PANEL)
-        self.runner_sec.pack(fill="x")
-        f = self.runner_sec
-        f.columnconfigure(0, weight=1, uniform="rn")
-        f.columnconfigure(2, weight=1, uniform="rn")
+    # ── 銘柄リスト ──
+    def _build_symbols(self, parent):
+        # 未反映バンドはこのセクションの直前に差し込む
+        self.sym_sec = tk.Frame(parent, bg=PANEL)
+        self.sym_sec.pack(fill="x")
+        p = tk.Frame(self.sym_sec, bg=PANEL)
+        p.pack(fill="x", padx=18, pady=(12, 14))
+        self.sym_label = section_label(p, "銘柄リスト —")
+        self.sym_label.pack(side="left", anchor="w")
+        self.btn_symbols = FlatButton(p, "↻ 最新CSVで更新", command=self.update_symbols,
+                                      pady=8, padx=18)
+        self.btn_symbols.pack(side="right")
 
-        left = tk.Frame(f, bg=PANEL)
-        left.grid(row=0, column=0, sticky="nsew")
-        lp = tk.Frame(left, bg=PANEL)
-        lp.pack(fill="both", expand=True, padx=18, pady=(12, 14))
-        section_label(lp, "ランナー").pack(fill="x", pady=(0, 8))
-        row = tk.Frame(lp, bg=PANEL)
-        row.pack(fill="x")
-        row.columnconfigure(0, weight=1, uniform="btn")
-        row.columnconfigure(2, weight=1, uniform="btn")
-        self.btn_start = FlatButton(row, "▶ 起動", command=self.start_runner)
-        self.btn_start.grid(row=0, column=0, sticky="ew")
-        tk.Frame(row, bg=PANEL, width=12).grid(row=0, column=1)
+    # ── 操作行（ランナーの起動・停止と緊急停止）──
+    def _build_actions(self, parent):
+        f = tk.Frame(parent, bg=PANEL)
+        f.pack(fill="x")
+        row = tk.Frame(f, bg=PANEL)
+        row.pack(fill="x", padx=18, pady=13)
+
+        self.btn_start = FlatButton(row, "▶ 起動", command=self.start_runner,
+                                    fg=GREEN, border=GREEN_LINE, pady=9, padx=22)
+        self.btn_start.pack(side="left")
         self.btn_stop = FlatButton(row, "■ 停止", command=self.stop_runner,
-                                   fg=RED, border="#5A2A2A")
-        self.btn_stop.grid(row=0, column=2, sticky="ew")
+                                   fg=RED, border="#5A2A2A", pady=9, padx=22)
+        self.btn_stop.pack(side="left", padx=(10, 0))
 
-        vsep(f).grid(row=0, column=1, sticky="ns")
-
-        right = tk.Frame(f, bg=PANEL)
-        right.grid(row=0, column=2, sticky="nsew")
-        rp = tk.Frame(right, bg=PANEL)
-        rp.pack(fill="both", expand=True, padx=18, pady=(12, 14))
-        self.sym_label = section_label(rp, "銘柄リスト —")
-        self.sym_label.pack(fill="x", pady=(0, 8))
-        self.btn_symbols = FlatButton(rp, "↻ 最新CSVで更新", command=self.update_symbols)
-        self.btn_symbols.pack(fill="x")
+        # 緊急停止は隣の「停止」と紛れないよう、唯一の塗りつぶしボタンにする
+        self.btn_panic = FlatButton(row, "緊急停止", command=self.emergency_stop,
+                                    solid=RED_SOLID, border=RED_SOLID,
+                                    font=FONTS["bodyb"], pady=9, padx=24)
+        self.btn_panic.pack(side="right")
 
     # ── ストラテジー ──
     def _build_strategies(self, parent):
@@ -410,11 +457,6 @@ class ControlPanel:
         self.btn_amount = FlatButton(ag, "保存", command=self.save_amounts,
                                      pady=20, padx=18)
         self.btn_amount.grid(row=0, column=4, padx=(14, 0), sticky="ns")
-
-        self.btn_panic = FlatButton(f, "緊急停止", command=self.emergency_stop,
-                                    solid=RED_SOLID, border=RED_SOLID,
-                                    font=FONTS["bodyb"], pady=12)
-        self.btn_panic.pack(fill="x", pady=(14, 0))
 
     def _toggle_card(self, parent, col, name, command):
         outer = tk.Frame(parent, bg=BORDER)

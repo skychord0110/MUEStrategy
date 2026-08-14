@@ -30,6 +30,7 @@ TEXT_MUTE   = "#5E5E5E"
 GREEN       = "#4ADE80"
 GREEN_BG    = "#14351F"
 GREEN_DIM   = "#6E9C80"
+GREEN_LINE  = "#2E6B45"   # 「起動」ボタンの枠
 
 ORANGE      = "#F0A040"
 ORANGE_BG   = "#5A3208"   # 未反映バンドの地
