@@ -65,10 +65,28 @@ DETECTORS = [
 
 # AI仮想売買（発注なし）
 AI_STRATEGIES = [
-    ("午後引け戻り",   "afternoon_reversal", ("strategies", "afternoon_reversal")),
-    ("投げ売り反発",   "panic_rebound",      ("strategies", "panic_rebound")),
-    ("複合シグナル",   "confluence",         ("strategies", "confluence")),
+    ("午後引け戻り",       "afternoon_reversal",  ("strategies", "afternoon_reversal")),
+    ("投げ売り反発",       "panic_rebound",       ("strategies", "panic_rebound")),
+    ("複合シグナル",       "confluence",          ("strategies", "confluence")),
+    ("投げ売り反発 幅広",  "panic_rebound_wide",  ("strategies", "panic_rebound_wide")),
 ]
+
+# 検知ストラテジーをONにしたとき、一緒にONにする仮想売買戦略。
+# 「投げ売り」の検知は2つの戦略（決済幅ちがい）の共通の入力なので、
+# 検知にチェックを入れたら両方が動くようにする。片方だけにしたい場合は
+# AI仮想売買欄で個別に外せる。
+GROUPED_WITH_DETECTOR = {
+    "panic_sell_detector": ("panic_rebound", "panic_rebound_wide"),
+}
+
+# チップの右側に添える補足（損切り/利確幅）をconfigから作るための対応表
+SUB_FROM = {
+    "afternoon_reversal": ("afternoon_reversal",),
+    "panic_rebound": ("panic_rebound",),
+    "panic_rebound_wide": ("panic_rebound_wide",),
+    "confluence": ("confluence",),
+    "panic_sell_detector": ("panic_rebound", "panic_rebound_wide"),
+}
 
 # 実弾で動かす戦略（autotrade/config.yaml の strategies）。
 # 自動売買が発注するのはAI戦略のENTRYシグナルを受けたときだけなので、
@@ -540,6 +558,27 @@ class ControlPanel:
             out[key] = self._strategy_value(path)
         return out
 
+    def _chip_sub(self, key: str) -> str:
+        """チップに添える損切り/利確幅。configの実際の値から作る。
+
+        「投げ売り」の検知は2つの戦略の共通入力なので、両方の幅を並べて
+        「2パターンある」ことが画面上で分かるようにする。
+        """
+        names = SUB_FROM.get(key)
+        if not names:
+            return ""
+        strategies = (self._runner_cfg().get("strategies") or {})
+        parts = []
+        for n in names:
+            s = strategies.get(n) or {}
+            sl, tp = s.get("stop_loss_pct"), s.get("take_profit_pct")
+            if sl is None or tp is None:
+                continue
+            parts.append(f"-{float(sl):g}/+{float(tp):g}")
+        if not parts:
+            return ""
+        return ("・".join(parts) + "%") if len(parts) > 1 else parts[0] + "%"
+
     def _at_strategy_values(self) -> dict:
         s = self._autotrade_cfg().get("strategies") or {}
         return {k: bool(s.get(k)) for _l, k in AT_STRATEGIES}
@@ -605,15 +644,23 @@ class ControlPanel:
     def _on_chip(self, chip, new_value):
         if self.busy:
             return
-        label = next(l for l, k, _ in DETECTORS + AI_STRATEGIES if k == chip.key)
+        names = {k: l for l, k, _ in DETECTORS + AI_STRATEGIES}
+        label = names[chip.key]
+        # 検知にぶら下がる仮想売買戦略はまとめて切り替える（GROUPED_WITH_DETECTOR）
+        targets = [chip.key] + list(GROUPED_WITH_DETECTOR.get(chip.key, ()))
         try:
-            config_io.set_nested_enabled(RUNNER_CONFIG, chip.key, new_value)
+            for k in targets:
+                config_io.set_nested_enabled(RUNNER_CONFIG, k, new_value)
         except Exception as e:
             messagebox.showerror("設定の書き換えに失敗", str(e), parent=self.root)
             return
         self._reload_configs(force=True)
+        extra = ""
+        if len(targets) > 1:
+            extra = f"（{('・'.join(names[k] for k in targets[1:]))} も同時に"\
+                    f"{'ON' if new_value else 'OFF'}）"
         self._append_log(f"[コントロールパネル] {label} を "
-                         f"{'ON' if new_value else 'OFF'} にしました "
+                         f"{'ON' if new_value else 'OFF'} にしました{extra} "
                          f"(strategies/runner/config.yaml)")
         self._refresh_ui()
 
@@ -1058,6 +1105,7 @@ class ControlPanel:
         _reasons, pending_keys = self._pending()
         values = self._all_strategy_values()
         for key, chip in self.chips.items():
+            chip.set_sub(self._chip_sub(key))
             chip.set_value(values.get(key, False), dirty=(key in pending_keys))
             chip.set_enabled(not self.busy)
 

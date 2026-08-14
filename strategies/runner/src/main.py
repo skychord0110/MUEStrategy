@@ -182,7 +182,11 @@ def build_autotrader(config: dict, client, log):
     ex = at_executor.Executor(at_cfg, client=client, log=log)
     # 各戦略の損切り/利確幅は runner 側の設定を引き継ぐ
     sp = {}
-    for name in ("afternoon_reversal", "panic_rebound", "confluence"):
+    # panic_rebound_wide は仮想売買のみだが、将来 autotrade の strategies に
+    # 追加されたときに損切り・利確幅が引き継がれるようここにも入れておく
+    # （autotrade側の strategies に無い間は _active() が False を返すので発注されない）
+    for name in ("afternoon_reversal", "panic_rebound", "confluence",
+                 "panic_rebound_wide"):
         s = (config.get("strategies") or {}).get(name) or {}
         sp[name] = {"stop_loss_pct": s.get("stop_loss_pct", 2.0),
                     "take_profit_pct": s.get("take_profit_pct", 2.0)}
@@ -314,7 +318,8 @@ class RunnerEngine:
         ar = strategies_cfg.get("afternoon_reversal", {})
         cf = strategies_cfg.get("confluence", {})
         pr = strategies_cfg.get("panic_rebound", {})
-        if ar.get("enabled") or cf.get("enabled") or pr.get("enabled"):
+        pw = strategies_cfg.get("panic_rebound_wide", {})
+        if ar.get("enabled") or cf.get("enabled") or pr.get("enabled") or pw.get("enabled"):
             ai_mod = load_detector_module("AIStrategys")
             if ar.get("enabled"):
                 self.ai_strategies["afternoon_reversal"] = ai_mod.AfternoonReversalStrategy(
@@ -340,6 +345,17 @@ class RunnerEngine:
                     take_profit_pct=pr.get("take_profit_pct", 2.0),
                     min_entry_price=pr.get("min_entry_price", 0.0),
                     stages=tuple(pr.get("stages", ["DUMP"])),
+                )
+            # 幅広版: 検知は panic_rebound と同じで、損切り・利確の幅だけが違う。
+            # PaperBookはインスタンスごとに独立しているので建玉は混ざらない。
+            if pw.get("enabled"):
+                self.ai_strategies["panic_rebound_wide"] = ai_mod.PanicReboundStrategy(
+                    entry_start=parse_time(pw.get("entry_start", "09:00")),
+                    entry_end=parse_time(pw.get("entry_end", "15:00")),
+                    stop_loss_pct=pw.get("stop_loss_pct", 1.5),
+                    take_profit_pct=pw.get("take_profit_pct", 3.0),
+                    min_entry_price=pw.get("min_entry_price", 0.0),
+                    stages=tuple(pw.get("stages", ["DUMP"])),
                 )
 
     def handle(self, data: dict, now=None) -> list:

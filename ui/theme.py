@@ -164,7 +164,8 @@ class Chip(tk.Frame):
       未反映     … 地=橙        / 文字=橙（ランナー再起動が必要な変更が入っている）
     """
 
-    def __init__(self, parent, text, value: bool, command=None):
+    def __init__(self, parent, text, value: bool, command=None, sub: str = ""):
+        """sub: ラベルの右側に小さく添える補足（損切り/利確幅など）。"""
         super().__init__(parent, bg=BORDER)
         self._command = command
         self.value = bool(value)
@@ -175,14 +176,22 @@ class Chip(tk.Frame):
         self.inner.pack(fill="both", expand=True, padx=1, pady=1)
         self.box = tk.Label(self.inner, text="", width=2, font=FONTS["small"])
         self.box.pack(side="left", padx=(10, 8), pady=8)
+        # 補足は右端に固定し、名前が長くても折り返さないようにする
+        self.sub = tk.Label(self.inner, text=sub, bg=PANEL_ALT, fg=TEXT_MUTE,
+                            font=FONTS["small"], anchor="e")
+        self.sub.pack(side="right", pady=8, padx=(6, 10))
         self.text = tk.Label(self.inner, text=text, bg=PANEL_ALT, fg=TEXT,
                              font=FONTS["body"], anchor="w")
-        self.text.pack(side="left", fill="x", expand=True, pady=8, padx=(0, 10))
+        self.text.pack(side="left", fill="x", expand=True, pady=8)
 
-        for w in (self, self.inner, self.box, self.text):
+        for w in (self, self.inner, self.box, self.text, self.sub):
             w.bind("<Button-1>", self._click)
             w.configure(cursor="hand2")
         self._paint()
+
+    def set_sub(self, text: str):
+        if self.sub.cget("text") != text:
+            self.sub.configure(text=text)
 
     def _click(self, _e=None):
         if not self._enabled:
@@ -203,22 +212,23 @@ class Chip(tk.Frame):
     def set_enabled(self, on: bool):
         self._enabled = bool(on)
         cur = "hand2" if on else "arrow"
-        for w in (self, self.inner, self.box, self.text):
+        for w in (self, self.inner, self.box, self.text, self.sub):
             w.configure(cursor=cur)
         self._paint()
 
     def _paint(self):
         if self.dirty:
-            bg, fg, border = ORANGE_CHIP, ORANGE, "#6B4310"
+            bg, fg, border, sub = ORANGE_CHIP, ORANGE, "#6B4310", "#B8823C"
         elif self.value:
-            bg, fg, border = PANEL_ALT, TEXT, BORDER
+            bg, fg, border, sub = PANEL_ALT, TEXT, BORDER, TEXT_DIM
         else:
-            bg, fg, border = PANEL, TEXT_MUTE, BORDER
+            bg, fg, border, sub = PANEL, TEXT_MUTE, BORDER, "#4A4A4A"
         if not self._enabled:
             fg = TEXT_MUTE
         self.configure(bg=border)
         self.inner.configure(bg=bg)
         self.text.configure(bg=bg, fg=fg)
+        self.sub.configure(bg=bg, fg=sub)
         if self.value:
             self.box.configure(bg=BLUE if self._enabled else "#33556E",
                                fg="#FFFFFF", text="✓")

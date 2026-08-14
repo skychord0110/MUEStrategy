@@ -1,112 +1,113 @@
 # 全ストラテジー共通の監視銘柄リスト
 # ここを編集すれば、全ストラテジー（small_lot_sell_detector / panic_sell_detector /
-# under_surge_detector / AIStrategys / edinet_holder_monitor / periodic_buy_rss）に反映される。
+# under_surge_detector / AIStrategys / edinet_holder_monitor / periodic_buy_zscore）に反映される。
 #
-# 出典: extracted_stocks/2026-08-10T09-21_export.csv の R/Rスコア上位50銘柄
-# 最終更新: 2026-08-10
+# 出典: extracted_stocks/2026-08-14T10-44_export.csv の上位50銘柄
+# 最終更新: 2026-08-14（コントロールパネルから自動生成）
 #
 # 注意:
 #   - kabuステーションAPIのPUSH配信の銘柄登録上限は50銘柄（アプリ全体で共有）。
 #   - 各ストラテジーは起動時に「全登録解除→このリストを登録」するため、
 #     並走させる場合も全ストラテジーがこの同一リストを参照していれば競合しない。
+#   - このファイルは起動時にしか読まれない。入れ替えたらランナーの再起動が必要。
 symbols:
   - symbol: "4889"
     exchange: 1   # 1 = 東証  レナサイエンス
-  - symbol: "6433"
-    exchange: 1   # 1 = 東証  ヒーハイスト
-  - symbol: "5707"
-    exchange: 1   # 1 = 東証  東邦亜鉛
-  - symbol: "4894"
-    exchange: 1   # 1 = 東証  クオリプス
   - symbol: "6217"
     exchange: 1   # 1 = 東証  津田駒工業
-  - symbol: "7794"
-    exchange: 1   # 1 = 東証  イーディーピー
-  - symbol: "4418"
-    exchange: 1   # 1 = 東証  ＪＤＳＣ
-  - symbol: "5597"
-    exchange: 1   # 1 = 東証  ブルーイノベーション
-  - symbol: "5724"
-    exchange: 1   # 1 = 東証  アサカ理研
-  - symbol: "9256"
-    exchange: 1   # 1 = 東証  サクシード
+  - symbol: "9337"
+    exchange: 1   # 1 = 東証  トリドリ
   - symbol: "4263"
     exchange: 1   # 1 = 東証  サスメド
-  - symbol: "9130"
-    exchange: 1   # 1 = 東証  共栄タンカー
-  - symbol: "1514"
-    exchange: 1   # 1 = 東証  住石ホールディングス
-  - symbol: "4011"
-    exchange: 1   # 1 = 東証  ヘッドウォータース
-  - symbol: "4395"
-    exchange: 1   # 1 = 東証  アクリート
   - symbol: "5817"
     exchange: 1   # 1 = 東証  ＪＭＡＣＳ
-  - symbol: "5132"
-    exchange: 1   # 1 = 東証  ｐｌｕｓｚｅｒｏ
-  - symbol: "4888"
-    exchange: 1   # 1 = 東証  ステラファーマ
-  - symbol: "6620"
-    exchange: 1   # 1 = 東証  宮越ホールディングス
-  - symbol: "6580"
-    exchange: 1   # 1 = 東証  ライトアップ
-  - symbol: "4570"
-    exchange: 1   # 1 = 東証  免疫生物研究所
-  - symbol: "2216"
-    exchange: 1   # 1 = 東証  カンロ
-  - symbol: "9115"
-    exchange: 1   # 1 = 東証  明海グループ
-  - symbol: "5026"
-    exchange: 1   # 1 = 東証  トリプルアイズ
-  - symbol: "7034"
-    exchange: 1   # 1 = 東証  プロレド・パートナーズ
-  - symbol: "6228"
-    exchange: 1   # 1 = 東証  ジェイ・イー・ティ
-  - symbol: "4579"
-    exchange: 1   # 1 = 東証  ラクオリア創薬
-  - symbol: "5892"
-    exchange: 1   # 1 = 東証  ｙｕｔｏｒｉ
-  - symbol: "4840"
-    exchange: 1   # 1 = 東証  トライアイズ
+  - symbol: "5707"
+    exchange: 1   # 1 = 東証  東邦亜鉛
   - symbol: "4013"
     exchange: 1   # 1 = 東証  勤次郎
-  - symbol: "5729"
-    exchange: 1   # 1 = 東証  日本精鉱
-  - symbol: "9556"
-    exchange: 1   # 1 = 東証  ＩＮＴＬＯＯＰ
-  - symbol: "4422"
-    exchange: 1   # 1 = 東証  ＶＡＬＵＥＮＥＸ
-  - symbol: "3963"
-    exchange: 1   # 1 = 東証  シンクロ・フード
-  - symbol: "2998"
-    exchange: 1   # 1 = 東証  クリアル
-  - symbol: "4811"
-    exchange: 1   # 1 = 東証  ドリーム・アーツ
   - symbol: "3692"
     exchange: 1   # 1 = 東証  ＦＦＲＩセキュリティ
-  - symbol: "4446"
-    exchange: 1   # 1 = 東証  Ｌｉｎｋ－Ｕグループ
-  - symbol: "4075"
-    exchange: 1   # 1 = 東証  ブレインズテクノロジー
-  - symbol: "4412"
-    exchange: 1   # 1 = 東証  サイエンスアーツ
-  - symbol: "5591"
-    exchange: 1   # 1 = 東証  ＡＶＩＬＥＮ
+  - symbol: "3747"
+    exchange: 1   # 1 = 東証  インタートレード
+  - symbol: "4894"
+    exchange: 1   # 1 = 東証  クオリプス
+  - symbol: "4579"
+    exchange: 1   # 1 = 東証  ラクオリア創薬
+  - symbol: "4288"
+    exchange: 1   # 1 = 東証  アズジェント
+  - symbol: "7794"
+    exchange: 1   # 1 = 東証  イーディーピー
+  - symbol: "3930"
+    exchange: 1   # 1 = 東証  はてな
+  - symbol: "4888"
+    exchange: 1   # 1 = 東証  ステラファーマ
+  - symbol: "3449"
+    exchange: 1   # 1 = 東証  テクノフレックス
+  - symbol: "6433"
+    exchange: 1   # 1 = 東証  ヒーハイスト
+  - symbol: "9556"
+    exchange: 1   # 1 = 東証  ＩＮＴＬＯＯＰ
+  - symbol: "1514"
+    exchange: 1   # 1 = 東証  住石ホールディングス
+  - symbol: "2216"
+    exchange: 1   # 1 = 東証  カンロ
+  - symbol: "5034"
+    exchange: 1   # 1 = 東証  ｕｎｅｒｒｙ
+  - symbol: "6228"
+    exchange: 1   # 1 = 東証  ジェイ・イー・ティ
+  - symbol: "7034"
+    exchange: 1   # 1 = 東証  プロレド・パートナーズ
+  - symbol: "3803"
+    exchange: 1   # 1 = 東証  イメージ情報開発
+  - symbol: "5287"
+    exchange: 1   # 1 = 東証  イトーヨーギョー
+  - symbol: "4395"
+    exchange: 1   # 1 = 東証  アクリート
+  - symbol: "4418"
+    exchange: 1   # 1 = 東証  ＪＤＳＣ
+  - symbol: "5729"
+    exchange: 1   # 1 = 東証  日本精鉱
+  - symbol: "5132"
+    exchange: 1   # 1 = 東証  ｐｌｕｓｚｅｒｏ
+  - symbol: "4422"
+    exchange: 1   # 1 = 東証  ＶＡＬＵＥＮＥＸ
+  - symbol: "6580"
+    exchange: 1   # 1 = 東証  ライトアップ
+  - symbol: "5590"
+    exchange: 1   # 1 = 東証  ネットスターズ
+  - symbol: "5597"
+    exchange: 1   # 1 = 東証  ブルーイノベーション
+  - symbol: "9256"
+    exchange: 1   # 1 = 東証  サクシード
+  - symbol: "4414"
+    exchange: 1   # 1 = 東証  フレクト
   - symbol: "5599"
     exchange: 1   # 1 = 東証  Ｓ＆Ｊ
-  - symbol: "7373"
-    exchange: 1   # 1 = 東証  アイドマ・ホールディングス
-  - symbol: "4575"
-    exchange: 1   # 1 = 東証  キャンバス
-  - symbol: "5031"
-    exchange: 1   # 1 = 東証  モイ
-  - symbol: "5994"
-    exchange: 1   # 1 = 東証  ファインシンター
-  - symbol: "9145"
-    exchange: 1   # 1 = 東証  ビーイングホールディングス
-  - symbol: "3267"
-    exchange: 1   # 1 = 東証  フィル・カンパニー
-  - symbol: "7071"
-    exchange: 1   # 1 = 東証  アンビスホールディングス
-  - symbol: "4393"
-    exchange: 1   # 1 = 東証  バンク・オブ・イノベーション
+  - symbol: "3963"
+    exchange: 1   # 1 = 東証  シンクロ・フード
+  - symbol: "4166"
+    exchange: 1   # 1 = 東証  かっこ
+  - symbol: "2998"
+    exchange: 1   # 1 = 東証  クリアル
+  - symbol: "4570"
+    exchange: 1   # 1 = 東証  免疫生物研究所
+  - symbol: "5262"
+    exchange: 1   # 1 = 東証  日本ヒューム
+  - symbol: "4840"
+    exchange: 1   # 1 = 東証  トライアイズ
+  - symbol: "4199"
+    exchange: 1   # 1 = 東証  ワンダープラネット
+  - symbol: "9238"
+    exchange: 1   # 1 = 東証  バリュークリエーション
+  - symbol: "6620"
+    exchange: 1   # 1 = 東証  宮越ホールディングス
+  - symbol: "4378"
+    exchange: 1   # 1 = 東証  ＣＩＮＣ
+  - symbol: "4075"
+    exchange: 1   # 1 = 東証  ブレインズテクノロジー
+  - symbol: "1885"
+    exchange: 1   # 1 = 東証  東亜建設工業
+  - symbol: "7369"
+    exchange: 1   # 1 = 東証  メイホーホールディングス
+  - symbol: "5591"
+    exchange: 1   # 1 = 東証  ＡＶＩＬＥＮ

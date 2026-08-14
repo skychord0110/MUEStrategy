@@ -111,6 +111,23 @@ def set_top_bool(path: str, key: str, value: bool) -> None:
     _write_lines(path, lines)
 
 
+def _find_child(lines, path: str, parent: str, key: str) -> int:
+    """`parent:` ブロックの中にある `key:` の行番号を返す。
+
+    parent は字下げの深さを問わず探す（`strategies:` のようなトップレベルでも、
+    その下の `panic_rebound_wide:` のような入れ子でも同じように扱える）。
+    キー名はこれらのファイル内で一意なので誤爆しない。
+    """
+    p = _find_key(lines, parent)
+    if p is None:
+        raise ConfigEditError(f"{os.path.basename(path)} に {parent}: がありません")
+    indent = len(_KEY_LINE.match(lines[p].rstrip("\r\n")).group("indent"))
+    i = _find_key(lines, key, start=p + 1, end=_block_end(lines, p, indent))
+    if i is None:
+        raise ConfigEditError(f"{parent}: の中に {key}: がありません")
+    return i
+
+
 def set_child_bool(path: str, parent: str, key: str, value: bool) -> None:
     """`parent:` ブロック直下の `key: true/false` を書き換える。
 
@@ -118,13 +135,7 @@ def set_child_bool(path: str, parent: str, key: str, value: bool) -> None:
     値が真偽値そのもの（enabled: を挟まない）場合に使う。
     """
     lines = _read_lines(path)
-    p = _find_key(lines, parent, indent=0)
-    if p is None:
-        raise ConfigEditError(f"{os.path.basename(path)} に {parent}: がありません")
-    i = _find_key(lines, key, start=p + 1, end=_block_end(lines, p, 0))
-    if i is None:
-        raise ConfigEditError(f"{parent}: の中に {key}: がありません")
-    _set_bool_at(lines, i, value)
+    _set_bool_at(lines, _find_child(lines, path, parent, key), value)
     _write_lines(path, lines)
 
 
@@ -132,17 +143,19 @@ def set_child_number(path: str, parent: str, key: str, value) -> None:
     """`parent:` ブロック直下の数値を書き換える（例: capital > max_use_amount）。
 
     intは桁区切りなしの整数として書く（YAMLの `1_000` 表記は使わない）。
+    元の値が小数表記（3.0 など）なら小数のまま書く。整数に直してしまうと
+    設定ファイルに意味のない差分が出るため。
     """
     if isinstance(value, float) and value.is_integer():
         value = int(value)
-    text = str(int(value)) if isinstance(value, int) else repr(float(value))
     lines = _read_lines(path)
-    p = _find_key(lines, parent, indent=0)
-    if p is None:
-        raise ConfigEditError(f"{os.path.basename(path)} に {parent}: がありません")
-    i = _find_key(lines, key, start=p + 1, end=_block_end(lines, p, 0))
-    if i is None:
-        raise ConfigEditError(f"{parent}: の中に {key}: がありません")
+    i = _find_child(lines, path, parent, key)
+    old = _NUM_LINE.match(lines[i].rstrip("\r\n"))
+    was_decimal = bool(old) and "." in old.group("val")
+    if isinstance(value, int):
+        text = f"{float(value)}" if was_decimal else str(value)
+    else:
+        text = repr(float(value))
     _replace_value_at(lines, i, text, _NUM_LINE, "数値")
     _write_lines(path, lines)
 
