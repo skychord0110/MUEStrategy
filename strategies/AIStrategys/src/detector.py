@@ -180,6 +180,71 @@ class AfternoonReversalStrategy:
         return [entry]
 
 
+class RankedAfternoonReversalStrategy(AfternoonReversalStrategy):
+    """午後の下値大口買い・引け戻り（順位優先版）。
+
+    AfternoonReversalStrategy との違いは**エントリーの取捨選択だけ**で、
+    検知条件・決済ルールは同じ。
+
+      銘柄リストの上位 top_rank 位以内 … 従来どおり即エントリー
+      それより下の順位            … late_entry_after 以降でないとエントリーしない
+
+    順位は symbols.yaml の並び順（＝extracted_stocks のR/Rスコア順）。
+    set_ranks() でランナーから渡す。渡されていない銘柄は下位として扱う。
+
+    【根拠】2026-08-14の5週間分析（analysis/analysis_result_2026-08-14.md）
+    午後UNDER急増を順位で分けると、決済ルールを5つ変えても上位が下位を上回った:
+
+      順位      SL2/TP2        大引け         60分後
+      1〜25位   90.6%/+0.897%  84.4%/+0.574%  75.0%/+0.684%   (n=32)
+      26〜50位  65.9%/+0.464%  65.9%/+0.481%  63.6%/+0.442%   (n=44)
+
+    ただし「上位25位だけ」にすると取引機会が21日→16日に減り、
+    累計リターンはむしろ落ちた（+13.29% → +11.42%）。
+    そこで**下位は遅い時間帯なら拾う**ことで機会を残す。
+    1日1建玉で回した実測（21営業日・コスト0.15%控除後）:
+
+      上位50・その日最初（現行）      21回 勝率76.2% +0.633%/回 累計+13.29% 負け3回(最悪-2.00%)
+      上位25のみ                    16回 勝率93.8% +0.714%/回 累計+11.42% 負け1回(最悪-1.18%)
+      本戦略（上位25即／下位は14時〜） 18回 勝率94.4% +0.708%/回 累計+12.74% 負け1回(最悪-1.18%)
+
+    需給の読み: R/Rスコア上位は「大幅下落後に空売り機関が買い戻しに入っている」銘柄で、
+    売り手が枯れかけたところに下値の大口買いが重なると反発しやすい。
+    実際、上位25位は75%が買い戻しあり、26位以下は18%だった。
+
+    ⚠️ 上位25位の標本は n=32 と少なく、week2は2件でマイナス。
+    """
+
+    def __init__(self, entry_start: dtime = dtime(13, 0), entry_end: dtime = dtime(15, 0),
+                 stop_loss_pct: float = 2.0, take_profit_pct: float = 2.0,
+                 min_entry_price: float = 500.0, top_rank: int = 25,
+                 late_entry_after: dtime = dtime(14, 0), ranks: dict = None):
+        super().__init__(entry_start=entry_start, entry_end=entry_end,
+                         stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct,
+                         min_entry_price=min_entry_price)
+        self.top_rank = int(top_rank)
+        self.late_entry_after = late_entry_after
+        self.ranks = dict(ranks or {})
+
+    def set_ranks(self, ranks: dict):
+        """銘柄コード -> 順位（1始まり）。ランナーが銘柄リストから作って渡す。"""
+        self.ranks = {str(k): int(v) for k, v in (ranks or {}).items()}
+
+    def rank_of(self, symbol):
+        return self.ranks.get(str(symbol))
+
+    def on_signal(self, source: str, alert: dict, msg_time) -> list:
+        rank = self.rank_of(alert.get("symbol"))
+        # 順位が分からない銘柄は下位扱い（安全側）
+        if rank is None or rank > self.top_rank:
+            if msg_time is None or msg_time.time() < self.late_entry_after:
+                return []
+        out = super().on_signal(source, alert, msg_time)
+        for e in out:
+            e["rank"] = rank
+        return out
+
+
 class ConfluenceStrategy:
     """複合シグナル戦略（仮想売買）。
 

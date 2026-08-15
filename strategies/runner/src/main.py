@@ -185,8 +185,8 @@ def build_autotrader(config: dict, client, log):
     # panic_rebound_wide は仮想売買のみだが、将来 autotrade の strategies に
     # 追加されたときに損切り・利確幅が引き継がれるようここにも入れておく
     # （autotrade側の strategies に無い間は _active() が False を返すので発注されない）
-    for name in ("afternoon_reversal", "panic_rebound", "confluence",
-                 "panic_rebound_wide"):
+    for name in ("afternoon_reversal", "afternoon_reversal_ranked",
+                 "panic_rebound", "confluence", "panic_rebound_wide"):
         s = (config.get("strategies") or {}).get(name) or {}
         sp[name] = {"stop_loss_pct": s.get("stop_loss_pct", 2.0),
                     "take_profit_pct": s.get("take_profit_pct", 2.0)}
@@ -316,10 +316,11 @@ class RunnerEngine:
         # 入力にした仮想売買。発注はしない。詳細は ../../AIStrategys/README.md
         self.ai_strategies = {}
         ar = strategies_cfg.get("afternoon_reversal", {})
+        rk = strategies_cfg.get("afternoon_reversal_ranked", {})
         cf = strategies_cfg.get("confluence", {})
         pr = strategies_cfg.get("panic_rebound", {})
         pw = strategies_cfg.get("panic_rebound_wide", {})
-        if ar.get("enabled") or cf.get("enabled") or pr.get("enabled") or pw.get("enabled"):
+        if any(c.get("enabled") for c in (ar, rk, cf, pr, pw)):
             ai_mod = load_detector_module("AIStrategys")
             if ar.get("enabled"):
                 self.ai_strategies["afternoon_reversal"] = ai_mod.AfternoonReversalStrategy(
@@ -329,6 +330,20 @@ class RunnerEngine:
                     take_profit_pct=ar.get("take_profit_pct", 2.0),
                     min_entry_price=ar.get("min_entry_price", 500.0),
                 )
+            # 順位優先版: 検知・決済は afternoon_reversal と同じで、
+            # 銘柄リストの順位によってエントリーを取捨選択する点だけが違う。
+            # 順位は起動時に main() から set_ranks() で渡す。
+            if rk.get("enabled"):
+                self.ai_strategies["afternoon_reversal_ranked"] = \
+                    ai_mod.RankedAfternoonReversalStrategy(
+                        entry_start=parse_time(rk.get("entry_start", "13:00")),
+                        entry_end=parse_time(rk.get("entry_end", "15:00")),
+                        stop_loss_pct=rk.get("stop_loss_pct", 2.0),
+                        take_profit_pct=rk.get("take_profit_pct", 2.0),
+                        min_entry_price=rk.get("min_entry_price", 500.0),
+                        top_rank=rk.get("top_rank", 25),
+                        late_entry_after=parse_time(rk.get("late_entry_after", "14:00")),
+                    )
             if cf.get("enabled"):
                 self.ai_strategies["confluence"] = ai_mod.ConfluenceStrategy(
                     window_seconds=cf.get("window_seconds", 1800),
@@ -517,6 +532,15 @@ def main():
     symbols = load_symbols(config, args.config)
     log.info("監視銘柄: %d銘柄（%s から読み込み）", len(symbols),
              "config直接指定" if config.get("symbols") else config.get("symbols_file"))
+
+    # 銘柄リストの並び順＝extracted_stocks のR/Rスコア順。これを順位として渡す。
+    ranks = {str(s["symbol"]): i for i, s in enumerate(symbols, start=1)}
+    for name, strat in engine.ai_strategies.items():
+        if hasattr(strat, "set_ranks"):
+            strat.set_ranks(ranks)
+            log.info("%s: 銘柄リストの順位を設定しました（上位%d位は即エントリー / "
+                     "それ以下は%s以降）", name, strat.top_rank,
+                     strat.late_entry_after.strftime("%H:%M"))
     client.unregister_all()
     reg_result = client.register_symbols(symbols)
     log.info("銘柄登録結果: %s", reg_result)

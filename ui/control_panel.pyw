@@ -68,6 +68,8 @@ AI_STRATEGIES = [
     ("午後引け戻り",       "afternoon_reversal",  ("strategies", "afternoon_reversal")),
     ("投げ売り反発",       "panic_rebound",       ("strategies", "panic_rebound")),
     ("複合シグナル",       "confluence",          ("strategies", "confluence")),
+    ("午後引け戻り 順位優先", "afternoon_reversal_ranked",
+     ("strategies", "afternoon_reversal_ranked")),
     ("投げ売り反発 幅広",  "panic_rebound_wide",  ("strategies", "panic_rebound_wide")),
 ]
 
@@ -82,6 +84,7 @@ GROUPED_WITH_DETECTOR = {
 # チップの右側に添える補足（損切り/利確幅）をconfigから作るための対応表
 SUB_FROM = {
     "afternoon_reversal": ("afternoon_reversal",),
+    "afternoon_reversal_ranked": ("afternoon_reversal_ranked",),
     "panic_rebound": ("panic_rebound",),
     "panic_rebound_wide": ("panic_rebound_wide",),
     "confluence": ("confluence",),
@@ -95,6 +98,7 @@ AT_STRATEGIES = [
     ("午後引け戻り", "afternoon_reversal"),
     ("投げ売り反発", "panic_rebound"),
     ("複合シグナル", "confluence"),
+    ("午後引け戻り 順位優先", "afternoon_reversal_ranked"),
 ]
 
 # 資金上限（autotrade/config.yaml の capital）
@@ -384,17 +388,21 @@ class ControlPanel:
         section_label(p, "AI仮想売買（発注なし）").pack(fill="x", pady=(14, 9))
         self._chip_grid(p, AI_STRATEGIES, cols=3)
 
-    def _chip_grid(self, parent, items, cols=3):
+    def _chip_grid(self, parent, items, cols=3, store=None, command=None):
+        """items: (表示名, キー, ...) の並び。cols列で折り返す。"""
+        store = self.chips if store is None else store
+        command = command or self._on_chip
         grid = tk.Frame(parent, bg=PANEL)
         grid.pack(fill="x")
         for c in range(cols):
             grid.columnconfigure(c * 2, weight=1, uniform="chip")
-        for i, (label, key, _path) in enumerate(items):
+        for i, item in enumerate(items):
+            label, key = item[0], item[1]
             r, c = divmod(i, cols)
-            chip = Chip(grid, label, False, command=self._on_chip)
+            chip = Chip(grid, label, False, command=command)
             chip.grid(row=r * 2, column=c * 2, sticky="ew")
             chip.key = key
-            self.chips[key] = chip
+            store[key] = chip
             if c * 2 + 1 < cols * 2 - 1:
                 tk.Frame(grid, bg=PANEL, width=12).grid(row=r * 2, column=c * 2 + 1)
             if r * 2 + 1 <= (len(items) - 1) // cols * 2:
@@ -429,18 +437,9 @@ class ControlPanel:
         # ── 実売買に使う戦略 ──
         section_label(f, "実売買に使う戦略（チェックした戦略だけが実際に発注する）").pack(
             fill="x", pady=(15, 8))
-        sg = tk.Frame(f, bg=PANEL)
-        sg.pack(fill="x")
         self.at_chips = {}
-        for c in range(len(AT_STRATEGIES)):
-            sg.columnconfigure(c * 2, weight=1, uniform="atchip")
-        for i, (label, key) in enumerate(AT_STRATEGIES):
-            chip = Chip(sg, label, False, command=self._on_at_chip)
-            chip.grid(row=0, column=i * 2, sticky="ew")
-            chip.key = key
-            self.at_chips[key] = chip
-            if i < len(AT_STRATEGIES) - 1:
-                tk.Frame(sg, bg=PANEL, width=12).grid(row=0, column=i * 2 + 1)
+        self._chip_grid(f, AT_STRATEGIES, cols=3, store=self.at_chips,
+                        command=self._on_at_chip)
 
         # ── 資金上限 ──
         section_label(f, "資金上限（残高を参照し、この金額を超えない範囲で数量を決める）").pack(
@@ -1170,6 +1169,7 @@ class ControlPanel:
         # 実売買に使う戦略
         at_values = self._at_strategy_values()
         for key, chip in self.at_chips.items():
+            chip.set_sub(self._chip_sub(key))
             chip.set_value(at_values.get(key, False), dirty=(f"at:{key}" in pending_keys))
             chip.set_enabled(not self.busy)
 

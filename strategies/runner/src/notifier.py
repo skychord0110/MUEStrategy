@@ -46,14 +46,15 @@ STRATEGY_LABELS = {
     "panic_sell_detector": "投げ売り",
     "under_surge_detector": "UNDER急増",
     "afternoon_reversal": "AI午後引け戻り",
+    "afternoon_reversal_ranked": "AI午後引け戻り(順位優先)",
     "confluence": "AI複合シグナル",
     "panic_rebound": "AI投げ売り反発",
     "panic_rebound_wide": "AI投げ売り反発(幅広)",
 }
 
 # AIストラテジー（仮想売買）のストラテジー名
-AI_PAPER_STRATEGIES = ("afternoon_reversal", "confluence", "panic_rebound",
-                       "panic_rebound_wide")
+AI_PAPER_STRATEGIES = ("afternoon_reversal", "afternoon_reversal_ranked",
+                       "confluence", "panic_rebound", "panic_rebound_wide")
 
 PANIC_STAGE_LABELS = {
     "ABSORBED": "投げ売り吸収",
