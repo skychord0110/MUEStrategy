@@ -45,6 +45,20 @@ class AutoTrader:
         self._last_poll = None
         self._last_balance_refresh = None
 
+    # ── 約定音 ──
+
+    def _sound(self, kind: str):
+        """約定したときだけ鳴らす。検知では鳴らさない。
+
+        音の再生はランナーのnotifierに任せる（別スレッドで鳴らすので
+        ここがブロックすることはない）。notifierが無い場合は何もしない。
+        """
+        try:
+            import notifier
+            notifier.play_fill_sound(kind, dry_run=bool(self.config.get("dry_run", True)))
+        except Exception:
+            self.log.debug("約定音の再生に失敗しました", exc_info=True)
+
     # ── 有効判定 ──
 
     def _active(self, strategy: str) -> bool:
@@ -119,6 +133,10 @@ class AutoTrader:
             return
 
         cap = self.config.get("capital", {})
+        # 呼値グループを読む前に必ずマスタを揃える。銘柄マスタの一括取得は
+        # バックグラウンドで進むため、起動直後のシグナルでは未取得のことがあり、
+        # そのまま既定値で指値を計算すると呼値に乗らない価格になりうる。
+        self.account.ensure_master(symbol)
         group = (self.account.master.get(symbol) or {}).get(
             "price_range_group", T.DEFAULT_GROUP)
         try:
@@ -210,6 +228,7 @@ class AutoTrader:
             strategy=info["strategy"], log=self.log)
         self.positions[info["symbol"]] = pm
         self.log.info("[自動売買] 建玉成立 %s", pm.describe())
+        self._sound("entry")
 
     # ── 板の更新（PUSHごと） ──
 
@@ -307,6 +326,7 @@ class AutoTrader:
             pm.on_filled(pm.qty, px, snap.time)
             self.log.info("[自動売買/DRY-RUN 約定] %s %d株 @%s → 損益 %+.2f%%",
                           pm.symbol, pm.qty, px, pm.pnl_pct())
+            self._sound("profit" if (pm.pnl_pct() or 0) > 0 else "loss")
             self.executor.open_orders.pop(pm.order_id, None)
             pm.on_order_canceled()
 
@@ -339,6 +359,7 @@ class AutoTrader:
                         pm.on_filled(filled, float(pm.last_order_price or 0), now)
                         self.log.warning("[自動売買/約定] %s %s株 → 損益 %+.2f%%",
                                          pm.symbol, filled, pm.pnl_pct() or 0)
+                        self._sound("profit" if (pm.pnl_pct() or 0) > 0 else "loss")
                         break
 
     def _lookup_entry_price(self, symbol, product):

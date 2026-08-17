@@ -5,9 +5,15 @@
 """
 import logging
 import os
+import threading
 from datetime import datetime
 
 logger = logging.getLogger("runner")
+
+try:
+    import winsound
+except ImportError:      # Windows以外
+    winsound = None
 
 # ログ保存先: このファイルの場所を基準にした runner/logs/（カレントディレクトリに依存しない）
 LOG_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs"))
@@ -60,6 +66,84 @@ PANIC_STAGE_LABELS = {
     "ABSORBED": "投げ売り吸収",
     "DUMP": "買い気配へぶつけ",
 }
+
+
+# ── 約定音 ──────────────────────────────────────────────────────
+# 鳴らすのは**実際に約定したときだけ**。検知（UNDER急増など）では鳴らさない。
+# 検知は1日100件近く出るため、鳴らすと通知として機能しなくなる
+# （2026-08-17: 小口売り連続58件 + UNDER急増34件）。
+#
+# 【なぜ音源ファイルを自前で持つのか】
+# ポップアップ通知（plyer）はWindowsの古いバルーン通知APIを使っており、
+# Windows 11では音が鳴らない（実測: サウンドスキームも再生デバイスも正常なのに
+# 一度も鳴らなかった）。winsound.PlaySound でWAVを直接鳴らせば、
+# Windowsの通知音設定に左右されずに鳴る。
+# 音源は sounds/ にあり、ui/make_sounds.py で生成・再生成できる。
+SOUND_DIR = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "sounds"))
+
+DEFAULT_FILL_SOUNDS = {
+    "entry":  "xl_rifle.wav",         # 新規約定: ライフル（2.4秒）
+    "profit": "xl_win_fanfare.wav",   # 利確:     ファンファーレ（2.2秒）
+    "loss":   "xl_loss_low.wav",      # 損切り:   沈む下降音（1.8秒）
+}
+
+# 音源が見つからないときの代替（合成音なので必ず鳴る）
+FALLBACK_BEEPS = {
+    "entry":  ((880, 110), (1320, 170)),
+    "profit": ((1047, 90), (1319, 90), (1568, 200)),
+    "loss":   ((587, 120), (392, 260)),
+}
+
+_sound = {"enabled": True, "files": dict(DEFAULT_FILL_SOUNDS), "on_dry_run": True}
+_warned = set()
+
+
+def configure(cfg: dict):
+    """runner/config.yaml の notification セクションを反映する。"""
+    cfg = cfg or {}
+    _sound["enabled"] = bool(cfg.get("sound", True))
+    _sound["on_dry_run"] = bool(cfg.get("sound_on_dry_run", True))
+    files = cfg.get("sound_files") or {}
+    for k in DEFAULT_FILL_SOUNDS:
+        if files.get(k):
+            _sound["files"][k] = files[k]
+    if _sound["enabled"] and winsound is None:
+        logger.warning("winsoundが使えない環境のため約定音は鳴りません")
+
+
+def sound_enabled(dry_run: bool = False) -> bool:
+    if not _sound["enabled"] or winsound is None:
+        return False
+    return _sound["on_dry_run"] or not dry_run
+
+
+def play_fill_sound(kind: str = "entry", dry_run: bool = False):
+    """約定音を鳴らす。kind は entry / profit / loss。
+
+    再生はブロックするので必ず別スレッドで行う
+    （PUSH処理や発注処理から呼ばれるため、ここで止めると板の処理が遅れる）。
+    """
+    if not sound_enabled(dry_run):
+        return
+    name = _sound["files"].get(kind) or DEFAULT_FILL_SOUNDS.get(kind)
+    path = name if (name and os.path.isabs(name)) else os.path.join(SOUND_DIR, name or "")
+
+    def run():
+        try:
+            if name and os.path.exists(path):
+                winsound.PlaySound(path, winsound.SND_FILENAME)
+                return
+            if kind not in _warned:
+                _warned.add(kind)
+                logger.warning("音源が見つからないため代替音を鳴らします: %s"
+                               "（python ui/make_sounds.py で生成できます）", path)
+            for freq, ms in FALLBACK_BEEPS.get(kind, FALLBACK_BEEPS["entry"]):
+                winsound.Beep(int(freq), int(ms))
+        except Exception:
+            logger.debug("約定音の再生に失敗しました", exc_info=True)
+
+    threading.Thread(target=run, daemon=True, name="fill-sound").start()
 
 
 def setup_logging():

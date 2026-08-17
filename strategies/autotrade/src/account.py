@@ -10,9 +10,11 @@
     python account.py --config ../config.yaml
 """
 import argparse
+import json
 import logging
 import os
 import sys
+from datetime import datetime
 from decimal import Decimal
 
 import yaml
@@ -66,10 +68,20 @@ def load_symbols(config, config_path):
     return [code(s) for s in (data or {}).get("symbols", [])]
 
 
+# 銘柄マスタのキャッシュ。実測で /symbol は1件あたり約790msかかり、
+# 50銘柄で38秒。これが起動時間のほぼ全てを占めていた（同時リクエストの
+# 影響は1.2倍程度で主因ではない）。売買単位・呼値グループは日中変わらないので、
+# 同じ日のうちは取り直さない。
+MASTER_CACHE = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "runner", "state",
+    "symbol_master.json"))
+
+
 class AccountView:
     """買付余力・建玉・銘柄マスタをまとめて保持する。
 
-    銘柄マスタ（売買単位・呼値グループ）は日中変わらないため起動時に一度だけ取得する。
+    銘柄マスタ（売買単位・呼値グループ）は日中変わらないため、
+    当日ぶんをファイルにキャッシュして起動のたびに取り直さない。
     """
 
     def __init__(self, client: KabuClient, log=None):
@@ -79,28 +91,74 @@ class AccountView:
         self.positions = []
         self.master = {}     # symbol -> {"trading_unit":int, "price_range_group":str, "name":str}
 
-    def load_master(self, symbols: list):
-        """銘柄情報（売買単位・呼値グループ）を取得してキャッシュする。
+    # ── 銘柄マスタのキャッシュ ──
 
+    def _load_cache(self):
+        """当日ぶんのキャッシュを読む。日付が違えば捨てる。
+
+        日をまたいだら取り直すのは、売買単位や呼値グループが変わる可能性が
+        あるため（株式併合・分割など）。古い売買単位で発注すると数量を誤る。
+        """
+        try:
+            with open(MASTER_CACHE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return {}
+        if data.get("fetched") != datetime.now().strftime("%Y-%m-%d"):
+            return {}
+        return data.get("master") or {}
+
+    def _save_cache(self):
+        try:
+            os.makedirs(os.path.dirname(MASTER_CACHE), exist_ok=True)
+            tmp = MASTER_CACHE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"fetched": datetime.now().strftime("%Y-%m-%d"),
+                           "master": self.master}, f, ensure_ascii=False)
+            os.replace(tmp, MASTER_CACHE)
+        except OSError as e:
+            self.log.debug("銘柄マスタのキャッシュ保存に失敗: %s", e)
+
+    def fetch_symbol(self, sym: str, exch: int = 1) -> bool:
+        """1銘柄ぶんだけ取得して master に入れる。成功なら True。"""
+        try:
+            d = self.client.get_symbol(sym, exch)
+        except Exception as e:
+            self.log.debug("銘柄情報の取得に失敗 %s: %s", sym, e)
+            return False
+        self.master[str(sym)] = {
+            "name": d.get("SymbolName") or "",
+            "trading_unit": int(d.get("TradingUnit") or 100),
+            "price_range_group": str(d.get("PriceRangeGroup") or tick_size.DEFAULT_GROUP),
+        }
+        return True
+
+    def load_master(self, symbols: list, use_cache: bool = True):
+        """銘柄情報（売買単位・呼値グループ）を取得する。
+
+        当日ぶんのキャッシュがあるものはAPIを叩かない。
         注意: kabuステーションに銘柄登録されていない銘柄は /symbol が 400 を返す。
         その場合は --register で登録してから再実行する。
         """
+        cached = self._load_cache() if use_cache else {}
         ok = 0
         failed = []
+        from_cache = 0
         for sym, exch in symbols:
-            try:
-                d = self.client.get_symbol(sym, exch)
-            except Exception as e:
-                failed.append(sym)
-                self.log.debug("銘柄情報の取得に失敗 %s: %s", sym, e)
+            sym = str(sym)
+            if sym in cached:
+                self.master[sym] = cached[sym]
+                from_cache += 1
+                ok += 1
                 continue
-            self.master[sym] = {
-                "name": d.get("SymbolName") or "",
-                "trading_unit": int(d.get("TradingUnit") or 100),
-                "price_range_group": str(d.get("PriceRangeGroup") or tick_size.DEFAULT_GROUP),
-            }
-            ok += 1
-        self.log.info("銘柄マスタを取得: %d/%d件", ok, len(symbols))
+            if self.fetch_symbol(sym, exch):
+                ok += 1
+            else:
+                failed.append(sym)
+        if ok:
+            self._save_cache()
+        self.log.info("銘柄マスタを取得: %d/%d件（うちキャッシュ %d件・API %d件）",
+                      ok, len(symbols), from_cache, ok - from_cache)
         if failed:
             self.log.warning(
                 "取得できなかった %d銘柄: %s", len(failed), " ".join(failed))
@@ -144,8 +202,26 @@ class AccountView:
                               p.get("LeavesQty"), p.get("Price"))
         return self.buying_power, self.positions
 
+    def ensure_master(self, symbol: str, exch: int = 1) -> bool:
+        """その銘柄のマスタが無ければ1件だけ取りに行く。既にあれば何もしない。
+
+        一括取得はバックグラウンドで進むため、起動直後のシグナルには
+        間に合わないことがある。売買単位や呼値グループを既定値で当て推量すると
+        発注数量や指値が狂うので、**使う直前に必ずこれを通す**こと。
+        """
+        if str(symbol) in self.master:
+            return True
+        self.log.info("[自動売買] %s の銘柄マスタが未取得のため個別に取得します", symbol)
+        if self.fetch_symbol(str(symbol), exch):
+            return True
+        self.log.warning(
+            "[自動売買] %s の銘柄マスタを取得できませんでした。"
+            "売買単位・呼値グループは既定値で計算します（数量や指値が狂う可能性）", symbol)
+        return False
+
     def plan_quantity(self, symbol: str, price, cfg_capital: dict):
         """指定銘柄について、現在値から発注可能数量を計算する（発注はしない）。"""
+        self.ensure_master(symbol)
         m = self.master.get(str(symbol), {})
         unit = m.get("trading_unit", cfg_capital.get("lot_size", 100))
         held = sizing.count_open_positions(self.positions)

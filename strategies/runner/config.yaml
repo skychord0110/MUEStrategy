@@ -159,6 +159,24 @@ periodic_buy_zscore:
   enabled: true
   config_path: null     # ツール側のconfig。null=../periodic_buy_zscore/config.yaml
 
+# ── 通知 ──
+notification:
+  # 約定したときだけ音を鳴らす（検知では鳴らさない）。
+  # 検知は1日100件近く出るため、鳴らすと通知として機能しなくなる。
+  #
+  # Windowsのポップアップ通知（plyer）は古いバルーン通知APIを使っており、
+  # Windows 11では音が鳴らない（実測: サウンド設定も再生デバイスも正常なのに
+  # 一度も鳴らなかった）。そのため sounds/ のWAVを winsound で直接鳴らしている。
+  # 音源は python ui/make_sounds.py で生成、python ui/sound_preview.py set で試聴できる。
+  sound: true
+  # dry_run（実発注しない）中の擬似約定でも鳴らすか。動作確認に使える。
+  sound_on_dry_run: false
+  # 鳴らす音（sounds/ 配下のファイル名。絶対パスも可）
+  sound_files:
+    entry: "xl_rifle.wav"          # 新規約定  ライフル（2.4秒）
+    profit: "xl_win_fanfare.wav"   # 利確      ファンファーレ（2.2秒）
+    loss: "xl_loss_low.wav"        # 損切り    沈む下降音（1.8秒）
+
 # ── 口座スナップショット（コントロールパネル表示用）──
 # 買付余力・建玉・評価損益を定期的に state/account.json に書き出す。
 # コントロールパネルはこのファイルを読むだけで、自分ではAPIトークンを発行しない。

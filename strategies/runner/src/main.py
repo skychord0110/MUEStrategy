@@ -476,6 +476,7 @@ def main():
 
     config = load_config(args.config)
     notifier.setup_logging()
+    notifier.configure(config.get("notification", {}))
     log = logging.getLogger("runner")
 
     # 前回の停止要求が残っていると起動直後に止まってしまうので消しておく。
@@ -550,11 +551,23 @@ def main():
     if built:
         engine.autotrader, at_view = built
         try:
-            at_view.load_master([(s["symbol"], s["exchange"]) for s in symbols])
             at_view.refresh("2")
         except Exception:
             log.exception("自動売買の初期化に失敗したため無効にします")
             engine.autotrader = None
+        if engine.autotrader is not None:
+            # 銘柄マスタの取得はバックグラウンドで進める。/symbol は1件約790msかかり、
+            # 50銘柄で40秒近い。ここで待つと起動が遅れ、その間は停止要求にも
+            # 反応できない。当日ぶんはキャッシュされるので2回目以降は一瞬で終わる。
+            # 取得前にシグナルが来た銘柄は plan_quantity が個別に取りに行く。
+            def load_master():
+                try:
+                    at_view.load_master([(s["symbol"], s["exchange"]) for s in symbols])
+                except Exception:
+                    log.exception("銘柄マスタの取得に失敗しました"
+                                  "（発注時に個別取得へ切り替わります）")
+            threading.Thread(target=load_master, daemon=True,
+                             name="symbol-master").start()
         if engine.autotrader is not None:
             # 発注はこの専用スレッドで行う。PUSH受信スレッドをブロックさせないため
             import pump as at_pump
