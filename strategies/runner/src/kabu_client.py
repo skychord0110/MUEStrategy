@@ -34,18 +34,38 @@ class KabuClient:
         self.token = None
         # 同時リクエストを避けるためのロック（上の説明を参照）
         self._lock = threading.RLock()
+        # 発注・取消が進行中か（順番待ち中も含む）。カウンタ自体の更新も排他する
+        self._order_lock = threading.Lock()
+        self._orders_in_flight = 0
 
     @property
     def busy(self) -> bool:
-        """いま別のスレッドがリクエスト中か。
-
-        待ってまで実行する必要のない処理（口座スナップショットなど）が
-        「この回は飛ばす」判断をするために使う。
-        """
+        """いま別のスレッドがリクエスト中か（種類を問わない）。"""
         if self._lock.acquire(blocking=False):
             self._lock.release()
             return False
         return True
+
+    @property
+    def order_in_flight(self) -> bool:
+        """発注・取消が進行中か（ロックの順番待ち中も真）。
+
+        急がない処理（口座スナップショットなど）が「発注の邪魔をしないよう
+        この回は飛ばす」判断をするために使う。
+
+        `busy` ではなくこちらを見ること。`busy` は歩み値ポーリングのような
+        待っても構わないリクエストにも反応してしまい、実測では
+        スナップショットの35%が不要に見送られていた（2026-08-17・551/1588回）。
+        """
+        return self._orders_in_flight > 0
+
+    def _order_begin(self):
+        with self._order_lock:
+            self._orders_in_flight += 1
+
+    def _order_end(self):
+        with self._order_lock:
+            self._orders_in_flight -= 1
 
     def authenticate(self) -> str:
         with self._lock:
@@ -175,9 +195,15 @@ class KabuClient:
         ⚠️ 実際に注文が発注される。呼び出し側で必ず安全弁を通すこと。
         レスポンス: {"Result": 0, "OrderId": "..."}  Result=0 が成功。
         """
-        with self._lock:
-            resp = requests.post(f"{self.base_url}/sendorder", json=payload,
-                                 headers=self._headers(), timeout=15)
+        # 順番待ちの段階から「発注中」にしておく（待っている間に
+        # スナップショットが割り込んで発注を遅らせないため）
+        self._order_begin()
+        try:
+            with self._lock:
+                resp = requests.post(f"{self.base_url}/sendorder", json=payload,
+                                     headers=self._headers(), timeout=15)
+        finally:
+            self._order_end()
         resp.raise_for_status()
         return resp.json()
 
@@ -186,9 +212,13 @@ class KabuClient:
 
         ⚠️ 実際に注文が取り消される。必須は OrderId のみ。
         """
-        with self._lock:
-            resp = requests.put(f"{self.base_url}/cancelorder",
-                                json={"OrderId": str(order_id)},
-                                headers=self._headers(), timeout=15)
+        self._order_begin()
+        try:
+            with self._lock:
+                resp = requests.put(f"{self.base_url}/cancelorder",
+                                    json={"OrderId": str(order_id)},
+                                    headers=self._headers(), timeout=15)
+        finally:
+            self._order_end()
         resp.raise_for_status()
         return resp.json()

@@ -30,6 +30,11 @@ BUYING_POWER_FIELD = "AuKCStockAccountWallet"
 
 DEFAULT_INTERVAL = 15.0
 
+# 書き込みが弾かれたときの再試行（OneDrive・ウイルス対策対策）。
+# 待ち時間は 0.3秒 → 0.6秒 と伸ばす
+WRITE_RETRIES = 3
+WRITE_RETRY_WAIT = 0.3
+
 
 def _num(v):
     """APIの数値フィールドを float にする。null や空文字は None。"""
@@ -96,21 +101,52 @@ def build(client, product: str = None) -> dict:
     return snap
 
 
-def write(snap: dict) -> None:
-    """途中まで書かれたファイルをUIが読まないよう、一時ファイル経由で置き換える。"""
+def write(snap: dict, log=None, retries: int = WRITE_RETRIES) -> None:
+    """途中まで書かれたファイルをUIが読まないよう、一時ファイル経由で置き換える。
+
+    OneDrive配下ではウイルス対策や同期がファイルを一時的に掴むため、
+    書き込みや置き換えが PermissionError(WinError 5) で弾かれることがある
+    （実測 2026-08-17 14:26 に1回発生）。数百ミリ秒あければ通るので、
+    間隔を伸ばしながら数回やり直す。
+    """
     os.makedirs(STATE_DIR, exist_ok=True)
     tmp = PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(snap, f, ensure_ascii=False)
-    os.replace(tmp, PATH)
-
-
-def clear() -> None:
-    """ランナー終了時にスナップショットを消す（古い値をUIが表示し続けないように）。"""
+    last = None
+    for attempt in range(1, retries + 1):
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(snap, f, ensure_ascii=False)
+            os.replace(tmp, PATH)
+            if attempt > 1 and log:
+                log.info("口座スナップショット: %d回目の再試行で書き込めました", attempt)
+            return
+        except OSError as e:
+            last = e
+            if attempt < retries:
+                time.sleep(WRITE_RETRY_WAIT * attempt)
+    # 諦めるときは書きかけの一時ファイルを残さない
     try:
-        os.remove(PATH)
+        os.remove(tmp)
     except OSError:
         pass
+    raise last
+
+
+def clear(retries: int = WRITE_RETRIES) -> None:
+    """ランナー終了時にスナップショットを消す（古い値をUIが表示し続けないように）。
+
+    ここも掴まれることがあるので少しだけ粘る。消せなくても致命的ではない
+    （UIは更新時刻が古いスナップショットを無視する）。
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            os.remove(PATH)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt < retries:
+                time.sleep(WRITE_RETRY_WAIT * attempt)
 
 
 def start(client, cfg: dict, log, product: str = "2") -> threading.Thread:
@@ -129,19 +165,22 @@ def start(client, cfg: dict, log, product: str = "2") -> threading.Thread:
         last_error = None
         skipped = 0
         while True:
-            # 発注など他のリクエストが進行中なら、この回は飛ばす。
-            # クライアントのロックで順番待ちはできるが、待ってから実行すると
-            # 発注直後に余計なリクエストを重ねることになる。表示用の情報なので
-            # 1回飛ばして次の周期に回すほうが安全（実測の500の再発防止）。
-            if getattr(client, "busy", False):
+            # 見送るのは「発注・取消が進行中のとき」だけにする。
+            # 歩み値ポーリングのような参照系の後ろには普通に並ぶ（クライアントの
+            # ロックが順番を守るので同時リクエストにはならない）。
+            #
+            # 以前は client.busy（種類を問わず誰かがリクエスト中か）で見送っていたが、
+            # z値検知が50銘柄を1秒間隔で回し続けるため常時どれかが飛んでおり、
+            # 実測でスナップショットの35%（551/1588回・2026-08-17）が
+            # 待つ必要のない相手を避けて空振りしていた。
+            if getattr(client, "order_in_flight", False):
                 skipped += 1
                 if skipped % 10 == 1:
-                    log.info("口座スナップショット: 他のリクエスト中のため見送り（累計%d回）",
-                             skipped)
+                    log.info("口座スナップショット: 発注中のため見送り（累計%d回）", skipped)
                 time.sleep(interval)
                 continue
             try:
-                write(build(client, product))
+                write(build(client, product), log=log)
                 last_error = None
             except Exception as e:
                 msg = f"{type(e).__name__}: {e}"
