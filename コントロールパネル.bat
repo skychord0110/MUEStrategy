@@ -1,16 +1,14 @@
 @echo off
-rem ============================================================================
-rem MUEStrategy コントロールパネル
-rem   このファイルをダブルクリックすると設定画面が開きます。
-rem   （黒いコンソール窓は出ません。pythonw.exe で起動するため）
-rem
-rem   前提: kabuステーションを起動してログインしておくこと
-rem         環境変数 KABU_API_PASSWORD を setx で設定しておくこと
-rem ============================================================================
+rem ===========================================================================
+rem  MUEStrategy control panel launcher (double-click me)
+rem  - Uses pythonw.exe so no console window appears.
+rem  - Requires kabu Station running and KABU_API_PASSWORD set (see README).
+rem  NOTE: keep this file ASCII-only. cmd.exe reads .bat in the OEM code page
+rem        (cp932 on Japanese Windows); UTF-8 Japanese breaks line parsing.
+rem ===========================================================================
 setlocal
 cd /d "%~dp0"
 
-rem pythonw.exe（窓なし版）を探す。見つからなければ python.exe で代用する。
 set "PYW="
 for /f "delims=" %%P in ('where pythonw.exe 2^>nul') do (
     set "PYW=%%P"
@@ -25,12 +23,11 @@ if defined PYW (
 
 where python.exe >nul 2>nul
 if errorlevel 1 (
-    echo Python が見つかりません。
-    echo   https://www.python.org/ からインストールし、PATH に追加してください。
+    echo Python not found. Install Python and add it to PATH.
     pause
     exit /b 1
 )
 
-echo pythonw.exe が見つからないため python.exe で起動します（この窓は開いたままになります）。
+echo pythonw.exe not found - falling back to python.exe (this window stays open).
 python "ui\control_panel.pyw"
 if errorlevel 1 pause

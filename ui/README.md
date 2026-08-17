@@ -7,13 +7,84 @@
 ```
 MUEStrategy/
 ├─ コントロールパネル.bat      ← これをダブルクリック
+├─ ショートカットを作る.bat    ← タスクバーに固定したいとき
+├─ sounds/                     約定音（生成物）
 └─ ui/
    ├─ control_panel.pyw        画面本体
    ├─ theme.py                 配色・フォント・共通ウィジェット
    ├─ config_io.py             config.yaml の真偽値だけを書き換える（コメント保持）
    ├─ symbols_update.py        最新CSV → symbols.yaml
-   └─ runner_control.py        ランナーの起動・停止と出力の取り込み
+   ├─ runner_control.py        ランナーの起動・停止と出力の取り込み
+   ├─ make_sounds.py           約定音の生成
+   ├─ sound_preview.py         約定音の試聴
+   ├─ icon_candidates.py       アイコンの候補を描き出す（図柄の定義もここ）
+   ├─ make_icon.py             選んだ案を control_panel.ico にする
+   └─ make_shortcut.py         デスクトップにショートカットを作る
 ```
+
+## タスクバーに固定する
+
+**`.bat` は直接ピン留めできない**（Windowsの仕様）。ショートカット経由なら固定できる。
+
+```powershell
+.\ショートカットを作る.bat
+```
+
+デスクトップに「MUEStrategy コントロールパネル」ができるので、
+右クリック →「タスクバーにピン留めする」（無ければ「その他のオプションを表示」の中）。
+ピン留めの操作自体はプログラムから実行できないため、最後のクリックだけ手作業になる。
+
+ショートカットは `.bat` を経由せず `pythonw.exe` を直接指すので黒い窓が出ない。
+
+### アイコン
+
+図柄は **B6「円相（赤銅／墨）」** — 切れ目のある環から線が外へ抜ける形で、
+差し色は赤銅一色。16〜256pxの7サイズを1ファイルに収めてある。
+
+図柄の定義は `icon_candidates.py` に一本化してある（`make_icon.py` はそれを呼ぶだけ）。
+外部ライブラリを使わず、4倍で描いてから縮小することでアンチエイリアスをかけている。
+
+```bat
+python ui\make_icon.py                  いまの案(B6)で作り直す
+python ui\icon_candidates.py            候補を ui\icon_preview\ に書き出して見比べる
+python ui\icon_candidates.py --ico B3   別の案を選ぶ（そのあと CHOICE も直す）
+```
+
+差し替えたら `make_icon.py` の `CHOICE` を同じ記号にし、`make_icon.py` →
+`ショートカットを作る.bat` の順に実行する。
+
+#### ハマりどころが2つある
+
+**1. 256px未満をPNGで入れてはいけない**
+
+ICOの各画像はPNGでもDIB（非圧縮のBMP）でもよいことになっているが、
+**Windowsが確実にPNGを解釈するのは256pxだけ**。それ未満をPNGで入れると
+デコードされず、実測では32pxが色ノイズになった。
+`icon_candidates.py` の `write_ico` は256pxだけPNG、それ未満をDIBで書く。
+DIBには作法が3つあり、高さをANDマスクぶん2倍で申告する・画素を下の行から
+並べる・色順をBGRAにする、のいずれを外しても化ける。
+
+**2. Windowsはアイコンの絵をパス単位で覚えている**
+
+同じファイル名のまま中身を差し替えても、古い絵が出続ける。
+`ie4uinit.exe -show` は効かないことがあり（キャッシュDBの更新時刻が変わらない）、
+`%LocalAppData%\Microsoft\Windows\Explorer\iconcache*.db` はExplorerが掴んでいるので
+Explorerを止めないと消せない。
+
+そこで `make_icon.py` は **案の記号を入れたファイル名**（`control_panel_b6.ico`）で
+書き出し、`make_shortcut.py` はそれを指す。案を変えればパスも変わるので、
+キャッシュに当たらず新しい絵がすぐ出る。名前固定の `control_panel.ico` にも同じ絵を
+複製してあるが、これは古いショートカットが壊れないようにするためだけのもの。
+
+すでにタスクバーに固定している場合は、**ピン留めを外して付け直す**
+（固定側は別の .lnk なので、デスクトップ側を作り直しても入れ替わらない）。
+
+### .bat は ASCII のみで書くこと
+
+`cmd.exe` は `.bat` をOSのコードページ（日本語環境ではcp932）で読む。
+UTF-8で日本語を書くと表示が化けるだけでなく、**行の解析が壊れて日本語の断片が
+コマンドとして実行される**（実測: `'承繧ｯ繝ｪ繝・け' は認識されていません`）。
+日本語のメッセージは Python 側から出すこと。
 
 ## 使う前に
 
