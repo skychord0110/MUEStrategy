@@ -26,6 +26,7 @@ if _RUNNER_SRC not in sys.path:
     sys.path.insert(0, _RUNNER_SRC)
 from kabu_client import KabuClient  # noqa: E402
 
+import order_builder as ob  # noqa: E402
 import sizing  # noqa: E402
 import tick_size  # noqa: E402
 
@@ -286,7 +287,7 @@ def main():
     view = AccountView(client, log)
     view.load_master(symbols)
     cap = config.get("capital", {})
-    product = "2" if cap.get("product") == "cash" else "3"
+    product = ob.product_for_config(cap.get("product"))
     view.refresh(product)
 
     # 現在値は本来PUSHで受け取るが、単体確認では板APIから1回だけ取得する

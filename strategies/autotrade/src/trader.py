@@ -171,7 +171,7 @@ class AutoTrader:
 
         # 余力は都度取り直す（他の約定で変動しているため）
         try:
-            self.account.refresh("2" if cap.get("product") == "cash" else "3")
+            self.account.refresh(ob.product_for_config(cap.get("product")))
         except Exception as e:
             self.log.warning("[自動売買] 余力の取得に失敗したためエントリーを見送り: %s", e)
             return
@@ -342,7 +342,7 @@ class AutoTrader:
             return
         self._last_poll = now
         cap = self.config.get("capital", {})
-        product = "2" if cap.get("product") == "cash" else "3"
+        product = ob.product_for_config(cap.get("product"))
 
         for st in self.executor.refresh_orders(product):
             oid, filled = st["order_id"], st["filled"]

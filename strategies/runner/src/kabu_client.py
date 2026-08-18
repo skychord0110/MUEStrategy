@@ -21,6 +21,36 @@ import requests
 
 PORTS = {"production": 18080, "demo": 18081}
 
+# /orders・/positions の product。CashMargin（1=現物 2=信用新規 3=信用返済）
+# とは別の体系なので取り違えに注意。
+PRODUCT_ALL = "0"
+PRODUCT_CASH = "1"
+PRODUCT_MARGIN = "2"
+PRODUCT_FUTURE = "3"
+PRODUCT_OPTION = "4"
+
+
+class KabuApiError(RuntimeError):
+    """kabuステーションAPIがエラーを返した。
+
+    HTTPステータスだけでは原因が分からないので、本文の ErrorResponse
+    （Code / Message）を必ず持たせる。エラーコードの意味は公式の
+    「エラーメッセージ」の一覧を参照すること。
+    https://kabucom.github.io/kabusapi/ptal/error.html
+    """
+
+    def __init__(self, status, code, message, path, body_text=""):
+        self.status = status
+        self.code = code
+        self.message = message
+        self.path = path
+        self.body_text = body_text
+        if code is not None or message:
+            detail = f"Code={code} {message}"
+        else:
+            detail = body_text[:300] if body_text else "本文なし"
+        super().__init__(f"HTTP {status} {path} ← {detail}")
+
 
 class KabuClient:
     def __init__(self, environment: str, api_password: str):
@@ -83,7 +113,7 @@ class KabuClient:
                 f"{'本番' if self.environment == 'production' else '検証'}用パスワードを確認してください。"
                 f" APIからの応答: {detail}"
             )
-        resp.raise_for_status()
+        self._check(resp, "/token")
         data = resp.json()
         if data.get("ResultCode") != 0:
             raise RuntimeError(f"token取得に失敗しました: {data}")
@@ -95,11 +125,40 @@ class KabuClient:
             raise RuntimeError("authenticate()を先に呼んでください")
         return {"Content-Type": "application/json", "X-API-KEY": self.token}
 
+    @staticmethod
+    def _check(resp, path: str) -> None:
+        """エラー応答を、原因が分かる形の例外にして投げる。
+
+        以前は requests の raise_for_status() をそのまま使っていたが、
+        あれはHTTPステータスしか持たないので「500だった」以上のことが
+        分からなかった。仕様上は 400/401/403/404/405/413/415/429/500 の
+        いずれも本文に ErrorResponse {"Code": 整数, "Message": 文字列} を返す
+        （500 InternalServerError も明記されている）。
+        原因はそこに書いてあるので必ず拾う。
+
+        実例: 2026-08-18 14:18 の /sendorder が500を返したが、
+        本文を捨てていたため原因を特定できなかった。
+        """
+        if resp.ok:
+            return
+        code = message = None
+        text = ""
+        try:
+            body = resp.json()
+        except ValueError:
+            text = (resp.text or "").strip()
+        else:
+            if isinstance(body, dict):
+                code, message = body.get("Code"), body.get("Message")
+            else:
+                text = str(body)
+        raise KabuApiError(resp.status_code, code, message, path, text)
+
     def unregister_all(self) -> None:
         with self._lock:
             resp = requests.put(f"{self.base_url}/unregister/all",
                                 headers=self._headers(), timeout=10)
-        resp.raise_for_status()
+        self._check(resp, "/unregister/all")
 
     def register_symbols(self, symbols: list) -> dict:
         """symbols: [{"symbol": "7203", "exchange": 1}, ...]（最大50件）"""
@@ -109,7 +168,7 @@ class KabuClient:
         with self._lock:
             resp = requests.put(f"{self.base_url}/register", json=body,
                                 headers=self._headers(), timeout=10)
-        resp.raise_for_status()
+        self._check(resp, "/register")
         return resp.json()
 
     # ── 以下は参照系（GET）のみ。発注・取消は含まない ──
@@ -118,7 +177,7 @@ class KabuClient:
         with self._lock:
             resp = requests.get(f"{self.base_url}{path}",
                                 headers=self._headers(), timeout=timeout)
-        resp.raise_for_status()
+        self._check(resp, path)
         return resp.json()
 
     def get_wallet_cash(self) -> dict:
@@ -134,7 +193,8 @@ class KabuClient:
     def get_positions(self, product: str = None) -> list:
         """残高照会（保有建玉）。GET /positions
 
-        product: 未指定=すべて / "2"=現物 / "3"=信用 （APIの product パラメータ）
+        product: 未指定=すべて / "1"=現物 / "2"=信用 / "3"=先物 / "4"=OP
+                 （PRODUCT_* を使うこと。CashMargin とは別の体系）
         """
         path = "/positions" if product is None else f"/positions?product={product}"
         return self._get(path)
@@ -172,6 +232,9 @@ class KabuClient:
                    order_id: str = None, state: str = None) -> list:
         """注文約定照会。GET /orders
 
+        product: 未指定=すべて / "1"=現物 / "2"=信用 / "3"=先物 / "4"=OP
+                 （PRODUCT_* を使うこと。CashMargin とは別の体系で、
+                   現物を "2" と取り違えると信用の注文を探しに行ってしまう）
         State（注文状態）: 1=待機 2=処理中 3=処理済 4=訂正取消送信中 5=終了
         （5には 発注エラー・取消済・全約定・失効・期限切れ が含まれる）
         """
@@ -204,7 +267,7 @@ class KabuClient:
                                      headers=self._headers(), timeout=15)
         finally:
             self._order_end()
-        resp.raise_for_status()
+        self._check(resp, "/sendorder")
         return resp.json()
 
     def cancel_order(self, order_id: str) -> dict:
@@ -220,5 +283,5 @@ class KabuClient:
                                     headers=self._headers(), timeout=15)
         finally:
             self._order_end()
-        resp.raise_for_status()
+        self._check(resp, "/cancelorder")
         return resp.json()

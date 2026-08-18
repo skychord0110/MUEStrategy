@@ -189,7 +189,7 @@ class Executor:
         symbol = str(order.get("Symbol"))
         side = str(order.get("Side"))
         qty = float(order.get("Qty") or 0)
-        product = "2" if int(order.get("CashMargin", 1)) == 1 else "3"
+        product = ob.product_for(order.get("CashMargin", 1))
         # 受付から /orders に載るまで少し間があるので数回試す
         for attempt, wait in enumerate((0.0, 1.0, 2.0), start=1):
             if wait:

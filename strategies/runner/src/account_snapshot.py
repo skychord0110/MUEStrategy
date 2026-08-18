@@ -149,11 +149,16 @@ def clear(retries: int = WRITE_RETRIES) -> None:
                 time.sleep(WRITE_RETRY_WAIT * attempt)
 
 
-def start(client, cfg: dict, log, product: str = "2") -> threading.Thread:
+def start(client, cfg: dict, log, product: str = None) -> threading.Thread:
     """スナップショットの書き出しをバックグラウンドで開始する。
 
     参照系2本（/wallet/cash と /positions）を interval 秒ごとに呼ぶだけなので
     レート制限には十分な余裕がある。失敗してもランナー本体は止めない。
+
+    product は既定で未指定（=すべて）。以前は "2" を「現物」のつもりで
+    渡していたが、仕様上 "2" は信用なので現物の建玉が1件も出ていなかった。
+    表示用なので、取引区分で絞らず全部見せるほうが取りこぼしがない。
+    （定義値: 0=すべて 1=現物 2=信用 3=先物 4=OP）
     """
     cfg = cfg or {}
     if cfg.get("enabled") is False:

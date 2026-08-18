@@ -35,6 +35,28 @@ SIDE_BUY = "2"
 CASH_MARGIN_CASH = 1       # 現物
 SECURITY_TYPE_STOCK = 1    # 株式
 
+# /orders・/positions の product。CashMargin とは別の体系なので取り違えに注意。
+#   product     0=すべて 1=現物 2=信用 3=先物 4=OP
+#   CashMargin  1=現物   2=信用新規 3=信用返済
+# 実際に取り違えていた（現物を"2"としていた）ため、2026-08-18に
+# 発注失敗後の突き合わせが信用注文を探してしまい、現物の注文を
+# 見つけられなかった。定義はここ1箇所に集約する。
+PRODUCT_ALL = "0"
+PRODUCT_CASH = "1"
+PRODUCT_MARGIN = "2"
+PRODUCT_FUTURE = "3"
+PRODUCT_OPTION = "4"
+
+
+def product_for(cash_margin) -> str:
+    """CashMargin から /orders・/positions の product を求める。"""
+    return PRODUCT_CASH if int(cash_margin or 1) == CASH_MARGIN_CASH else PRODUCT_MARGIN
+
+
+def product_for_config(name) -> str:
+    """config の capital.product（"cash" / "margin"）を product に直す。"""
+    return PRODUCT_CASH if (name or "cash") == "cash" else PRODUCT_MARGIN
+
 # 現物買/現物売で必須値が変わる（仕様書より）
 DELIV_TYPE_BUY = 2         # お預り金
 DELIV_TYPE_SELL = 0        # 指定なし
