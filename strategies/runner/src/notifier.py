@@ -146,12 +146,40 @@ def play_fill_sound(kind: str = "entry", dry_run: bool = False):
     threading.Thread(target=run, daemon=True, name="fill-sound").start()
 
 
+# 障害を知らせる音。約定音と違い音源ファイルは持たず、winsound.Beep の合成音にする
+# （音源が無い環境でも必ず鳴ってほしい種類の通知のため）。
+# 「鳴らすのは約定したときだけ」という上の原則の例外。障害は1日に何度も起きるもの
+# ではなく、むしろ**気づかないことが被害そのもの**だから鳴らす。
+# 実例 2026-08-20: kabuステーションが落ちて6時間、誰も気づかなかった。
+ALERT_BEEPS = ((1200, 150), (700, 150), (1200, 150), (700, 300))
+
+
+def notify_alert(title: str, body: str):
+    """障害通知。ポップアップ＋警告音で、見落とさないようにする。"""
+    notify_message(title, body)
+    if winsound is None:
+        return
+
+    def run():
+        try:
+            for freq, ms in ALERT_BEEPS:
+                winsound.Beep(int(freq), int(ms))
+        except Exception:
+            logger.debug("警告音の再生に失敗しました", exc_info=True)
+
+    threading.Thread(target=run, daemon=True, name="alert-sound").start()
+
+
 def setup_logging():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[DailyFileHandler(LOG_DIR), logging.StreamHandler()],
     )
+    # websocket-client は切断のたびに自分でも ERROR を出す（"<原因> - goodbye"）。
+    # ランナー側の on_error が同じ内容を日本語で出しているので二重になる。
+    # 2026-08-20 の接続断ではこれだけで4,000行を占めたため黙らせる。
+    logging.getLogger("websocket").setLevel(logging.CRITICAL)
 
 
 def build_message(strategy: str, alert: dict):

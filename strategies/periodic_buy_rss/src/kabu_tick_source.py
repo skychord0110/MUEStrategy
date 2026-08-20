@@ -18,6 +18,7 @@ RSS版に対する利点（2026-08-10に実機で確認）:
   - 直近2営業日ぶんが返るので、当日ぶんに絞ってから使う
 """
 import logging
+import time
 from datetime import datetime
 
 
@@ -35,6 +36,8 @@ class KabuTickSource:
         self.today_only = today_only
         self.log = log or logging.getLogger("periodic_buy_rss")
         self._rate_limited = 0
+        self._fail_streak = 0
+        self._fail_last_log = 0.0
 
     def connect(self):
         """RSS版とのインターフェース互換のために存在する。kabuでは事前準備は不要。"""
@@ -50,16 +53,29 @@ class KabuTickSource:
         try:
             d = self.client.get_time_and_sales(symbol, self.exchange)
         except Exception as e:
-            msg = str(e)
+            # 例外の型名を必ず添える。str(e) が空の例外があり、2026-08-20 14:30 の
+            # ログは「歩み値の取得に失敗 5707: 」と原因不明になった。
+            msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
             if "429" in msg:
                 self._rate_limited += 1
                 if self._rate_limited <= 3 or self._rate_limited % 50 == 0:
                     self.log.warning(
                         "歩み値の取得がレート制限に当たりました（%d回目）。"
                         "poll_interval_seconds を長くしてください: %s", self._rate_limited, symbol)
-            else:
-                self.log.warning("歩み値の取得に失敗 %s: %s", symbol, msg[:80])
+                return []
+            # kabuステーションが落ちると全銘柄で延々と失敗する。1件ずつ出すと
+            # ログが埋まる（2026-08-20の接続断では約4,000行）ので間引く。
+            now = time.monotonic()
+            self._fail_streak += 1
+            if self._fail_streak == 1 or now - self._fail_last_log >= 300:
+                self._fail_last_log = now
+                self.log.warning("歩み値の取得に失敗 %s: %s（連続%d件目）",
+                                 symbol, msg[:100], self._fail_streak)
             return []
+        if self._fail_streak:
+            self.log.info("歩み値の取得が復旧しました（%d件連続で失敗していました）",
+                          self._fail_streak)
+            self._fail_streak = 0
 
         rows = d.get("TradingPrice") or []
         today = datetime.now().astimezone().date().isoformat()

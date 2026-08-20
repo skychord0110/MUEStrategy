@@ -62,17 +62,34 @@ def build_message(a: dict):
     return title, body
 
 
+# 取得失敗の連続回数。kabuステーションが落ちると全銘柄で延々と失敗するため、
+# 1件ずつ WARNING を出すとログが埋まる（2026-08-20の接続断では約4,000行）。
+_fetch_fail = {"streak": 0, "last_log": 0.0}
+_FAIL_LOG_INTERVAL = 300
+
+
 def fetch_today(client, symbol, exchange, today_iso, log):
     """当日ぶんの歩み値を [(datetime, volume, price)] で返す。"""
     try:
         d = client.get_time_and_sales(symbol, exchange)
     except Exception as e:
-        msg = str(e)
+        # 例外の型名を必ず添える。str(e) が空の例外があり、
+        # 2026-08-20 14:30 のログは「歩み値の取得に失敗 5707: 」と原因不明になった。
+        msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
         if "429" in msg:
             log.debug("レート制限 %s", symbol)
-        else:
-            log.warning("歩み値の取得に失敗 %s: %s", symbol, msg[:70])
+            return None
+        now = time.monotonic()
+        _fetch_fail["streak"] += 1
+        if _fetch_fail["streak"] == 1 or now - _fetch_fail["last_log"] >= _FAIL_LOG_INTERVAL:
+            _fetch_fail["last_log"] = now
+            log.warning("歩み値の取得に失敗 %s: %s（連続%d件目）",
+                        symbol, msg[:100], _fetch_fail["streak"])
         return None
+    if _fetch_fail["streak"]:
+        log.info("歩み値の取得が復旧しました（%d件連続で失敗していました）",
+                 _fetch_fail["streak"])
+        _fetch_fail["streak"] = 0
     out = []
     for r in d.get("TradingPrice") or []:
         t = r.get("Time")

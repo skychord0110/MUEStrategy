@@ -38,7 +38,6 @@ STRATEGIES_ROOT = os.path.normpath(os.path.join(BASE_DIR, "..", ".."))
 # 中身は停止したいプロセスのPID。他プロセスあて／読めない内容なら無視する。
 STOP_FILE = os.path.normpath(os.path.join(BASE_DIR, "..", "state", "stop.request"))
 
-
 def _stop_requested() -> bool:
     """自分あての停止要求が置かれているか。"""
     try:
@@ -584,11 +583,95 @@ def main():
         for strategy, alert in engine.handle(data):
             notifier.notify(strategy, alert)
 
+    # ── 接続断からの自己復旧 ──
+    # kabuステーション（KabuS.exe）はこちらの都合と関係なく落ちることがある。
+    # 実例 2026-08-20 14:30:17: PCが終日「仮想メモリ不足」状態（イベントID 2004 が
+    # その日80回）で、dwm.exe・EXCEL.EXE なども相次いで落ちるなかKabuS.exeが消えた。
+    # WebSocketが WinError 10054（強制切断）→ 直後から18080は WinError 10061
+    # （接続拒否＝誰も待ち受けていない）になった。旧実装は5秒おきに繋ぎ直そうとして
+    # 6時間で4,003回失敗し、ログだけが1.2MB（通常80KB）に膨れ、誰も気づかなかった。
+    #
+    # そこで:
+    #   1. 繋ぎ直す前にHTTP側で生死を見る。落ちている間はWebSocketを叩かない
+    #   2. kabuステーションが再起動していると**トークンも銘柄登録も消えている**ので、
+    #      必ず再認証・銘柄再登録をしてからWebSocketを張る。これを飛ばすと
+    #      「WSは繋がっているのに板が1件も来ない」無言の停止になる（最も危険）
+    #   3. 待ち時間は指数的に伸ばし（5秒→最大60秒）、同じ失敗のログは間引く
+    #   4. 断が続いたらポップアップで知らせる（気づけるようにするのが主目的）
+    RECONNECT_MIN_WAIT = 5
+    RECONNECT_MAX_WAIT = 60
+    OUTAGE_LOG_INTERVAL = 300                      # 断が続く間のログ間隔（秒）
+    outage_notify_after = float(config.get("outage_notify_seconds", 60))
+
+    # 断の状態。since が None でなければ「いま繋がっていない」
+    outage = {"since": None, "attempts": 0, "last_log": 0.0, "notified": False}
+
+    def resync_session():
+        """kabuステーションと張り直す（再認証＋銘柄の再登録）。
+
+        トークンはkabuステーションを再起動すると無効になり、銘柄登録も消える。
+        どちらもHTTPが通らなければ例外になるので、生死確認も兼ねている。
+        """
+        client.authenticate()
+        client.unregister_all()
+        client.register_symbols(symbols)
+
+    def note_outage(err):
+        """接続に失敗した。最初の1回とその後の節目だけ記録する。"""
+        now = time.monotonic()
+        outage["attempts"] += 1
+        if outage["since"] is None:
+            outage["since"] = now
+            outage["last_log"] = now
+            log.error("kabuステーションに接続できません（%s: %s）。"
+                      "アプリが落ちていないか確認してください。"
+                      "復旧するまで繋ぎ直しを続けます（検知・自動売買は停止中）",
+                      type(err).__name__, str(err)[:150] or "詳細なし")
+            return
+        down = now - outage["since"]
+        if not outage["notified"] and down >= outage_notify_after:
+            outage["notified"] = True
+            notifier.notify_alert(
+                "[ランナー] kabuステーションが応答しません",
+                f"{int(down)}秒間つながりません（{outage['attempts']}回失敗）。"
+                "kabuステーションを起動し直してください。"
+                "検知・自動売買（損切り・利確・引け手仕舞い）は止まっています")
+        if now - outage["last_log"] >= OUTAGE_LOG_INTERVAL:
+            outage["last_log"] = now
+            log.error("kabuステーションに接続できないまま%d分経過（%d回失敗）",
+                      int(down // 60), outage["attempts"])
+
+    def note_recovered():
+        """接続できた。断からの復帰なら知らせる。"""
+        if outage["since"] is None:
+            return
+        down = time.monotonic() - outage["since"]
+        log.warning("kabuステーションへの接続が復旧しました"
+                    "（%d分%d秒の断・%d回失敗）。認証と銘柄登録をやり直しました",
+                    int(down // 60), int(down % 60), outage["attempts"])
+        if outage["notified"]:
+            notifier.notify_alert(
+                "[ランナー] 接続が復旧しました",
+                f"{int(down // 60)}分{int(down % 60)}秒ぶりに検知を再開しました。"
+                "断のあいだの板は受け取れていません")
+        outage.update({"since": None, "attempts": 0, "last_log": 0.0, "notified": False})
+
+    ws_error_last_log = [0.0]
+
     def on_error(ws, error):
-        log.error("WebSocketエラー: %s", error)
+        # 断が続いている間は note_outage 側でまとめて記録する（1回/9秒で溢れるため）
+        now = time.monotonic()
+        if outage["since"] is None and now - ws_error_last_log[0] >= 60:
+            ws_error_last_log[0] = now
+            log.error("WebSocketエラー: %s: %s", type(error).__name__, error)
+        else:
+            log.debug("WebSocketエラー（抑制）: %s", error)
 
     def on_close(ws, code, msg):
-        log.warning("WebSocket切断 (code=%s, msg=%s)", code, msg)
+        if outage["since"] is None:
+            log.warning("WebSocket切断 (code=%s, msg=%s)", code, msg)
+        else:
+            log.debug("WebSocket切断（抑制・断の継続中）")
 
     def on_open(ws):
         log.info("WebSocket接続確立。PUSH配信の受信を開始します。")
@@ -601,7 +684,22 @@ def main():
     stop = threading.Event()
 
     def receive_loop():
+        wait = RECONNECT_MIN_WAIT
+        first = True
         while not stop.is_set():
+            if first:
+                first = False           # 起動時の認証・銘柄登録は main() で済んでいる
+            else:
+                try:
+                    resync_session()
+                except Exception as e:
+                    note_outage(e)
+                    stop.wait(wait)
+                    wait = min(wait * 2, RECONNECT_MAX_WAIT)
+                    continue
+                note_recovered()
+                # 待ち時間はここでは戻さない。接続が30秒もたなければ空回りなので、
+                # run_forever() のあとで実際に繋がっていた時間を見て決める。
             ws = websocket.WebSocketApp(
                 client.ws_url,
                 on_message=on_message,
@@ -610,11 +708,20 @@ def main():
                 on_open=on_open,
             )
             ws_holder[0] = ws
+            connected_at = time.monotonic()
             ws.run_forever()
             if stop.is_set():
                 break
-            log.warning("WebSocketが切断されました。5秒後に再接続します。")
-            stop.wait(5)
+            # HTTPは通るのにWebSocketだけ張れない状態（kabuステーションの起動途中など）
+            # では resync_session() が成功してしまい、5秒間隔の空回りになる。
+            # すぐ落ちた接続は失敗とみなして待ち時間を伸ばす。
+            if time.monotonic() - connected_at < 30:
+                wait = min(wait * 2, RECONNECT_MAX_WAIT)
+            else:
+                wait = RECONNECT_MIN_WAIT
+            if outage["since"] is None:
+                log.warning("WebSocketが切断されました。%d秒後に繋ぎ直します", wait)
+            stop.wait(wait)
 
     def request_stop(signum, _frame):
         log.warning("停止信号を受け取りました（signal=%s）。終了します", signum)
