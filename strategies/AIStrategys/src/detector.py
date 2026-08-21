@@ -70,9 +70,13 @@ class PaperBook:
       3. 大引け: 15:30以降の現在値更新（クロージング・オークションの約定）
       4. 補完:   当日中に大引けのPUSHが来なかった場合、翌営業日以降の最初の
                  メッセージ時に「当日最後に観測した現在値」で決済扱いにする
+
+    take_profit_pct に None を渡すと利確を置かず、損切りに触れない限り
+    大引けまで持ち切る。1日かけて進む買い集めのように、上値を先に切ると
+    伸びしろを捨ててしまう性質の戦略で使う。
     """
 
-    def __init__(self, stop_loss_pct: float, take_profit_pct: float):
+    def __init__(self, stop_loss_pct: float, take_profit_pct=None):
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
         self.positions = {}       # symbol -> VirtualPosition
@@ -113,7 +117,8 @@ class PaperBook:
             pos.last_price = price
             if price <= pos.entry_price * (1 - self.stop_loss_pct / 100):
                 reason = "損切り"
-            elif price >= pos.entry_price * (1 + self.take_profit_pct / 100):
+            elif (self.take_profit_pct is not None
+                  and price >= pos.entry_price * (1 + self.take_profit_pct / 100)):
                 reason = "利確"
             elif msg_time.time() >= CLOSE_TIME:
                 reason = "大引け"
@@ -336,4 +341,70 @@ class PanicReboundStrategy:
             return []
         entry = self.book.enter(symbol, price, msg_time)
         entry["trigger"] = "投げ売り"
+        return [entry]
+
+
+class AccumulationFollowStrategy:
+    """定期買い集め追随戦略（仮想売買）。
+
+    エントリー: 定期買い集め検知（z値方式）が STRONG を点灯させた銘柄を
+                仮想買い。既定では**午前のみ**（同一銘柄は1日1回）。
+    決済: 損切り -stop_loss_pct% のみ。**利確は置かず**、触れなければ大引け。
+
+    他の戦略と違う点が2つある。
+      1. 利確を置かない
+      2. 入力が板（PUSH）ではなく歩み値のポーリングから来る
+
+    【根拠】2026-08-21の分析（analysis/output/2026-08-21/）
+      07-21〜08-21のアラートをYahoo Financeの5分足で検証した結果:
+        大引けまで持ち切り      n=20  勝率65.0%  期待値+0.56%
+        損切り-2%のみ           n=20  勝率60.0%  期待値+0.40%
+        利確+2%/損切り-2%       n=20  勝率60.0%  期待値+0.25%
+      利確を置くと期待値が半分近くまで落ちる。買い集めは1日かけて進むため、
+      +2%で切ると伸びしろを捨てることになる、という解釈と整合する。
+      時間帯では午前(09-11時)が n=14 期待値+0.52% と強く、
+      午後は n=4 期待値-0.19% で機能しなかった。
+
+    【重要・実弾に使ってはいけない理由】
+      上記の20件は**わずか8銘柄**から出ており、うち16件が3銘柄
+      （4013・6580・4414）に集中している。検出日も8日しかない。
+      実質3〜4の独立事例しかなく、統計として成立していない。
+      別銘柄で20件以上たまるまでは仮想売買に留めること。
+    """
+
+    def __init__(self, entry_start: dtime = dtime(9, 0),
+                 entry_end: dtime = dtime(11, 0),
+                 stop_loss_pct: float = 2.0, take_profit_pct=None,
+                 min_entry_price: float = 500.0, tiers: tuple = ("STRONG",),
+                 min_zscore: float = 0.0):
+        self.entry_start = entry_start
+        self.entry_end = entry_end
+        self.min_entry_price = min_entry_price
+        self.tiers = tuple(tiers)
+        self.min_zscore = min_zscore
+        self.book = PaperBook(stop_loss_pct, take_profit_pct)
+
+    def on_price(self, symbol: str, price, msg_time) -> list:
+        alert = self.book.check_exit(symbol, price, msg_time)
+        return [alert] if alert else []
+
+    def on_signal(self, source: str, alert: dict, msg_time) -> list:
+        if source != "periodic_buy_zscore":
+            return []
+        if alert.get("tier") not in self.tiers:
+            return []
+        if float(alert.get("zscore") or 0) < self.min_zscore:
+            return []
+        if not _in_window(msg_time, self.entry_start, self.entry_end):
+            return []
+        symbol = str(alert["symbol"])
+        # この検知は歩み値の統計から出るため価格を持たない。
+        # ランナー側が直近のPUSHで観測した現在値を入れてから渡してくる。
+        price = alert.get("price")
+        if price is None or price < self.min_entry_price:
+            return []
+        if not self.book.can_enter(symbol, msg_time):
+            return []
+        entry = self.book.enter(symbol, price, msg_time)
+        entry["trigger"] = "定期買い集め"
         return [entry]

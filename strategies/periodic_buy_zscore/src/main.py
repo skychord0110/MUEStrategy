@@ -104,8 +104,14 @@ def fetch_today(client, symbol, exchange, today_iso, log):
     return out
 
 
-def run_loop(config_path, log=None, notify_fn=None, stop_event=None, kabu_client=None):
-    """ポーリングループ。統合ランナーから別スレッドで呼ばれる。"""
+def run_loop(config_path, log=None, notify_fn=None, stop_event=None,
+             kabu_client=None, on_alert=None):
+    """ポーリングループ。統合ランナーから別スレッドで呼ばれる。
+
+    on_alert を渡すと、通知とは別にアラートの辞書
+    {"symbol", "tier", "zscore", "pairs", ...} をそのまま渡す。
+    ランナーはこれを仮想売買（AI買い集め追随）の入力に使う。
+    """
     log = log or logging.getLogger("periodic_buy_zscore")
     config = load_config(config_path)
     if kabu_client is None:
@@ -191,6 +197,13 @@ def run_loop(config_path, log=None, notify_fn=None, stop_event=None, kabu_client
                             notify_fn(title, body)
                         else:
                             log.info("%s %s", title, body)
+                        # 仮想売買などに生のアラートを渡す。通知が主目的の
+                        # ツールなので、ここが失敗しても検知は止めない。
+                        if on_alert:
+                            try:
+                                on_alert(a)
+                            except Exception:
+                                log.exception("アラートの受け渡しに失敗 %s", sym)
                 except Exception:
                     log.exception("判定でエラー %s", sym)
             wait(max(0.0, poll - (time.time() - t0)))

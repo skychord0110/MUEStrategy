@@ -71,6 +71,7 @@ AI_STRATEGIES = [
     ("午後引け戻り 順位優先", "afternoon_reversal_ranked",
      ("strategies", "afternoon_reversal_ranked")),
     ("投げ売り反発 幅広",  "panic_rebound_wide",  ("strategies", "panic_rebound_wide")),
+    ("買い集め追随",       "accumulation_follow", ("strategies", "accumulation_follow")),
 ]
 
 # 検知ストラテジーをONにしたとき、一緒にONにする仮想売買戦略。
@@ -79,6 +80,9 @@ AI_STRATEGIES = [
 # AI仮想売買欄で個別に外せる。
 GROUPED_WITH_DETECTOR = {
     "panic_sell_detector": ("panic_rebound", "panic_rebound_wide"),
+    # 買い集め追随の入力は「定期買い集め z値」の検知。検知を切ると
+    # シグナルが来ず戦略が沈黙するので、一緒に入れる。
+    "periodic_buy_zscore": ("accumulation_follow",),
 }
 
 # チップの右側に添える補足（損切り/利確幅）をconfigから作るための対応表
@@ -88,7 +92,9 @@ SUB_FROM = {
     "panic_rebound": ("panic_rebound",),
     "panic_rebound_wide": ("panic_rebound_wide",),
     "confluence": ("confluence",),
+    "accumulation_follow": ("accumulation_follow",),
     "panic_sell_detector": ("panic_rebound", "panic_rebound_wide"),
+    "periodic_buy_zscore": ("accumulation_follow",),
 }
 
 # 実弾で動かす戦略（autotrade/config.yaml の strategies）。
@@ -609,15 +615,22 @@ class ControlPanel:
         if not names:
             return ""
         strategies = (self._runner_cfg().get("strategies") or {})
-        parts = []
+        parts, has_no_tp = [], False
         for n in names:
             s = strategies.get(n) or {}
             sl, tp = s.get("stop_loss_pct"), s.get("take_profit_pct")
-            if sl is None or tp is None:
+            if sl is None:
                 continue
-            parts.append(f"-{float(sl):g}/+{float(tp):g}")
+            if tp is None:
+                # 利確を置かない戦略（買い集め追随）。単位まで入れて誤読を防ぐ
+                parts.append(f"-{float(sl):g}%・利確なし")
+                has_no_tp = True
+            else:
+                parts.append(f"-{float(sl):g}/+{float(tp):g}")
         if not parts:
             return ""
+        if has_no_tp:
+            return "・".join(parts)
         return ("・".join(parts) + "%") if len(parts) > 1 else parts[0] + "%"
 
     def _at_strategy_values(self) -> dict:

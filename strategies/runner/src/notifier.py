@@ -56,11 +56,14 @@ STRATEGY_LABELS = {
     "confluence": "AI複合シグナル",
     "panic_rebound": "AI投げ売り反発",
     "panic_rebound_wide": "AI投げ売り反発(幅広)",
+    "periodic_buy_zscore": "定期買い集め",
+    "accumulation_follow": "AI買い集め追随",
 }
 
 # AIストラテジー（仮想売買）のストラテジー名
 AI_PAPER_STRATEGIES = ("afternoon_reversal", "afternoon_reversal_ranked",
-                       "confluence", "panic_rebound", "panic_rebound_wide")
+                       "confluence", "panic_rebound", "panic_rebound_wide",
+                       "accumulation_follow")
 
 PANIC_STAGE_LABELS = {
     "ABSORBED": "投げ売り吸収",
@@ -218,9 +221,11 @@ def build_message(strategy: str, alert: dict):
         if alert["type"] == "ENTRY":
             title = f"[{label}/エントリー] {alert['symbol']}"
             trigger = "+".join(STRATEGY_LABELS.get(t, t) for t in alert["trigger"].split("+"))
+            tp = alert.get("take_profit_pct")
+            tp_txt = f"/利確+{tp:.1f}%" if tp is not None else "/利確なし"
             body = (
                 f"{alert['symbol']}: {trigger} を検知、{alert['price']}円で仮想買い"
-                f"（損切り-{alert['stop_loss_pct']:.1f}%/利確+{alert['take_profit_pct']:.1f}%"
+                f"（損切り-{alert['stop_loss_pct']:.1f}%{tp_txt}"
                 f"/残りは大引け・発注なし）"
             )
         else:  # EXIT

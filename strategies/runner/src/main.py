@@ -192,7 +192,7 @@ def build_autotrader(config: dict, client, log):
     return at_trader.AutoTrader(at_cfg, ex, view, log=log, strategy_params=sp), view
 
 
-def start_periodic_buy_zscore(cfg: dict, log, client=None):
+def start_periodic_buy_zscore(cfg: dict, log, client=None, engine=None):
     """定期買い集め検知（z値方式）をバックグラウンドで実行する。
 
     kabuステーションAPIの歩み値をポーリングし、「約定のちょうど10秒後の買い」が
@@ -215,15 +215,23 @@ def start_periodic_buy_zscore(cfg: dict, log, client=None):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
+    # 仮想売買（AI買い集め追随）に生のアラートを渡す。エンジン側で
+    # いったん受け皿に積み、PUSHスレッドが配る（建玉を触るのは1スレッドだけ）。
+    on_alert = None
+    if engine is not None:
+        def on_alert(a):
+            engine.submit_external("periodic_buy_zscore", a)
+
     def loop():
         try:
             mod.run_loop(tool_config, log=log, notify_fn=notifier.notify_message,
-                         kabu_client=client)
+                         kabu_client=client, on_alert=on_alert)
         except Exception:
             log.exception("定期買い集め検知(z値)の実行に失敗しました（ランナーは継続します）")
 
     threading.Thread(target=loop, name="periodic-buy-zscore", daemon=True).start()
-    log.info("定期買い集め検知(z値方式)をバックグラウンドで起動しました")
+    log.info("定期買い集め検知(z値方式)をバックグラウンドで起動しました%s",
+             "（仮想売買にも配信）" if on_alert else "")
 
 
 def start_periodic_buy_rss(cfg: dict, log, client=None):
@@ -272,6 +280,12 @@ class RunnerEngine:
         self.detectors = {}
         self.autotrader = None      # 自動売買。main()から差し込む（未設定なら仮想売買のみ）
         self.autotrade_pump = None  # 自動売買の処理スレッド。未設定ならこのスレッドで同期処理
+        # 別スレッドの検知（定期買い集めなど）から受け取ったアラートの受け皿。
+        # 板のPUSHとは非同期に届くため、いったんここに積んで handle() で配る。
+        # 仮想建玉はPUSHスレッドだけが触るようにして競合を避ける。
+        self._external = []
+        self._external_lock = threading.Lock()
+        self._last_price = {}       # symbol -> 直近に観測した現在値
         strategies_cfg = config.get("strategies", {})
 
         sl = strategies_cfg.get("small_lot_sell_detector", {})
@@ -319,7 +333,8 @@ class RunnerEngine:
         cf = strategies_cfg.get("confluence", {})
         pr = strategies_cfg.get("panic_rebound", {})
         pw = strategies_cfg.get("panic_rebound_wide", {})
-        if any(c.get("enabled") for c in (ar, rk, cf, pr, pw)):
+        af = strategies_cfg.get("accumulation_follow", {})
+        if any(c.get("enabled") for c in (ar, rk, cf, pr, pw, af)):
             ai_mod = load_detector_module("AIStrategys")
             if ar.get("enabled"):
                 self.ai_strategies["afternoon_reversal"] = ai_mod.AfternoonReversalStrategy(
@@ -362,6 +377,17 @@ class RunnerEngine:
                 )
             # 幅広版: 検知は panic_rebound と同じで、損切り・利確の幅だけが違う。
             # PaperBookはインスタンスごとに独立しているので建玉は混ざらない。
+            if af.get("enabled"):
+                self.ai_strategies["accumulation_follow"] = \
+                    ai_mod.AccumulationFollowStrategy(
+                        entry_start=parse_time(af.get("entry_start", "09:00")),
+                        entry_end=parse_time(af.get("entry_end", "11:00")),
+                        stop_loss_pct=af.get("stop_loss_pct", 2.0),
+                        take_profit_pct=af.get("take_profit_pct"),   # 既定は利確なし
+                        min_entry_price=af.get("min_entry_price", 500.0),
+                        tiers=tuple(af.get("tiers", ["STRONG"])),
+                        min_zscore=af.get("min_zscore", 0.0),
+                    )
             if pw.get("enabled"):
                 self.ai_strategies["panic_rebound_wide"] = ai_mod.PanicReboundStrategy(
                     entry_start=parse_time(pw.get("entry_start", "09:00")),
@@ -371,6 +397,30 @@ class RunnerEngine:
                     min_entry_price=pw.get("min_entry_price", 0.0),
                     stages=tuple(pw.get("stages", ["DUMP"])),
                 )
+
+    def submit_external(self, source: str, alert: dict) -> None:
+        """PUSH以外の経路で出た検知アラートを受け取る（別スレッドから呼ばれる）。
+
+        定期買い集め検知は歩み値のポーリングで動く別スレッドなので、
+        そこから直接AIストラテジーを叩くと仮想建玉を2スレッドで
+        触ることになる。いったんここに積み、handle() の中で配る。
+        """
+        with self._external_lock:
+            self._external.append((source, dict(alert)))
+
+    def _drain_external(self, now):
+        """積まれた外部アラートを取り出し、価格を補ってから返す。
+
+        歩み値ベースの検知は価格を持たないので、直近のPUSHで観測した
+        現在値を入れる。まだ一度もPUSHが来ていない銘柄は price=None の
+        まま渡し、エントリーするかどうかは各ストラテジーの判断に任せる。
+        """
+        with self._external_lock:
+            pending, self._external = self._external, []
+        for _, alert in pending:
+            if alert.get("price") is None:
+                alert["price"] = self._last_price.get(str(alert.get("symbol")))
+        return pending
 
     def handle(self, data: dict, now=None) -> list:
         """1件のPUSHメッセージを処理し、[(ストラテジー名, alert), ...] を返す。"""
@@ -384,6 +434,8 @@ class RunnerEngine:
         current_price = data.get("CurrentPrice")
         trading_volume = data.get("TradingVolume")
         low_price = data.get("LowPrice")
+        if current_price is not None:
+            self._last_price[str(symbol)] = current_price
 
         # 注意: kabuステーションAPIは BidPrice=最良「売」気配 / AskPrice=最良「買」気配 と
         # 一般的な英語の慣例と逆の命名のため、誤解の余地がないBuy1/Sell1〜10を使う。
@@ -431,7 +483,9 @@ class RunnerEngine:
         # 同一メッセージで即決済しないよう順序を固定）、その後に基礎ストラテジーの
         # 検知アラートをエントリー判定に配る
         if self.ai_strategies:
-            base_results = list(results)
+            # 別スレッドの検知ぶんも、この時点で同じ土俵に載せる。
+            # 対象銘柄のPUSHを待たずに配れるよう、メッセージの銘柄を問わず毎回引き取る。
+            base_results = list(results) + self._drain_external(now)
             for name, strat in self.ai_strategies.items():
                 for alert in strat.on_price(symbol, current_price, now):
                     results.append((name, alert))
@@ -517,7 +571,7 @@ def main():
     # 定期買い集め検知（z値方式・現行）
     z_cfg = config.get("periodic_buy_zscore", {})
     if z_cfg.get("enabled"):
-        start_periodic_buy_zscore(z_cfg, log, client)
+        start_periodic_buy_zscore(z_cfg, log, client, engine=engine)
 
     # 定期買い集め検知（旧・生カウント方式）。既定は無効
     rss_cfg = config.get("periodic_buy_rss", {})
