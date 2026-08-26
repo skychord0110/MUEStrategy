@@ -147,6 +147,56 @@ def test_ok_response_passes():
     kc.KabuClient._check(FakeResponse(200, {"Result": 0}), "/sendorder")
 
 
+# ── 3. 現物買いの預り区分（FundType）──────────────────────────────────
+def test_cash_buy_fund_type_default_and_override():
+    """現物買いの FundType は既定 "AA"、config 相当の上書きで "02" にもできること。
+
+    2026-08-26: 本口座で "02" が Code=100031「預り区分」で連続失敗。
+    公式実装例では特定口座で "AA"。既定を "AA" に寄せつつ切り替え可能にした。
+    """
+    o = ob.entry_limit_buy("3803", 200, 569.0)
+    assert o["FundType"] == "AA", "現物買いの既定 FundType は AA"
+    o2 = ob.entry_limit_buy("3803", 200, 569.0, fund_type="02")
+    assert o2["FundType"] == "02", "config で 02 に戻せること"
+    # 成行買いでも効くこと
+    assert ob.entry_market_buy("3803", 100, fund_type="02")["FundType"] == "02"
+
+
+def test_cash_sell_fund_type_is_spaces():
+    """現物売りの FundType は常に半角スペース2つ（仕様）。買い側の指定に影響されない。"""
+    o = ob.take_profit_sell("3803", 200, 580.0)
+    assert o["FundType"] == "  "
+
+
+def test_invalid_fund_type_rejected_before_send():
+    """仕様外の FundType は送信前に弾く（100031で気づくより前に止める）。"""
+    try:
+        ob.entry_limit_buy("3803", 200, 569.0, fund_type="99")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("不正な FundType が通ってしまった")
+
+
+def test_known_error_code_gets_hint():
+    """既知の発注エラーコードには対処法（hint）が添えられること。
+
+    2026-08-18 の500は本文を捨てていて原因が追えなかった。本文を残すだけでなく、
+    よくあるコードには「次に何をすればよいか」を添えて、その場で分かるようにする。
+    """
+    # 100031=預り区分, 21=余力不足 は代表例。文字列にも対処が出ること
+    for code in (100031, 21, 100368, 17, 18, 2):
+        e = kc.KabuApiError(500, code, "エラー", "/sendorder")
+        assert e.hint, f"Code={code} に対処法が無い"
+        assert "対処" in str(e)
+    # Code が文字列で返っても数値として照合できること
+    e = kc.KabuApiError(500, "100031", "エラー", "/sendorder")
+    assert e.hint and "預り区分" in e.hint
+    # 未知のコードは hint 無しでも壊れないこと
+    e = kc.KabuApiError(500, 999999, "エラー", "/sendorder")
+    assert e.hint is None and "999999" in str(e)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

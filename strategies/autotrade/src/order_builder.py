@@ -60,8 +60,16 @@ def product_for_config(name) -> str:
 # 現物買/現物売で必須値が変わる（仕様書より）
 DELIV_TYPE_BUY = 2         # お預り金
 DELIV_TYPE_SELL = 0        # 指定なし
-FUND_TYPE_BUY = "02"       # 保護
+# 現物買いの預り区分（FundType）。仕様上の有効値は "02"(保護預り) / "AA"(信用代用)。
+# どちらが通るかは口座設定に依存し、合っていないと Code=100031「預り区分をご確認ください」
+# で弾かれる（HTTP 500）。
+# 本口座は現物株式が全額「信用保証金代用」で保有され保護預りは 0 円（2026-08-25 残高で確認）。
+# よって "02"(保護預り) は必ず 100031 で弾かれ、"AA"(信用代用) が正しい。
+# 実際 2026-08-26 に "02" が2回連続失敗した。既定を "AA" とし、
+# config(capital.fund_type_cash_buy)で上書きできるようにしてある（口座が変わった場合のみ）。
+FUND_TYPE_BUY = "AA"       # 信用代用（本口座の現物株式の預り区分に一致）
 FUND_TYPE_SELL = "  "      # 半角スペース2つ
+VALID_FUND_TYPES_BUY = ("02", "AA")
 
 
 def _price_value(price):
@@ -74,12 +82,14 @@ def _price_value(price):
 
 
 def build_cash_order(symbol, side, qty, front_order_type, price=None,
-                     exchange=1, account_type=4, expire_day=0):
+                     exchange=1, account_type=4, expire_day=0, fund_type=None):
     """現物注文のリクエストボディを組み立てる。
 
     side: SIDE_BUY / SIDE_SELL
     front_order_type: FRONT_MARKET / FRONT_LIMIT / FRONT_MOC_AFTERNOON など
     price: 指値価格。成行・引成の場合は None（0が入る）
+    fund_type: 現物買いの預り区分を上書きする（"02" / "AA"）。None なら既定を使う。
+               現物売りは常に半角スペース2つ（仕様）で、ここでは指定できない。
     """
     if side not in (SIDE_BUY, SIDE_SELL):
         raise ValueError(f"不正な売買区分: {side}")
@@ -91,6 +101,14 @@ def build_cash_order(symbol, side, qty, front_order_type, price=None,
         raise ValueError(f"成行・引成に価格は指定できません: {price}")
 
     is_buy = side == SIDE_BUY
+    if is_buy:
+        fund = fund_type or FUND_TYPE_BUY
+        if fund not in VALID_FUND_TYPES_BUY:
+            # 仕様外の値は 100031 で弾かれるだけなので、送る前に気づけるようにする
+            raise ValueError(
+                f"現物買いの FundType は {VALID_FUND_TYPES_BUY} のいずれか: {fund!r}")
+    else:
+        fund = FUND_TYPE_SELL
     return {
         "Symbol": str(symbol),
         "Exchange": int(exchange),
@@ -98,7 +116,7 @@ def build_cash_order(symbol, side, qty, front_order_type, price=None,
         "Side": side,
         "CashMargin": CASH_MARGIN_CASH,
         "DelivType": DELIV_TYPE_BUY if is_buy else DELIV_TYPE_SELL,
-        "FundType": FUND_TYPE_BUY if is_buy else FUND_TYPE_SELL,
+        "FundType": fund,
         "AccountType": int(account_type),
         "Qty": int(qty),
         "FrontOrderType": int(front_order_type),

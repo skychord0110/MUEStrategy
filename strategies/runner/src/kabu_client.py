@@ -30,6 +30,23 @@ PRODUCT_FUTURE = "3"
 PRODUCT_OPTION = "4"
 
 
+# 発注(/sendorder)で返りうる主なエラーコードと、人が次に何をすればよいか。
+# HTTP 500 は表向きの箱で、本当の原因はこの Code にある（公式エラーメッセージ一覧）。
+# https://kabucom.github.io/kabusapi/ptal/error.html
+# 実例 2026-08-18: 4199 の発注が0.7秒で500。本文を捨てていたため原因を特定できず、
+# しかも買付可能額が 88,479→8,579円 に減っており「500だが実は約定していた」疑いが
+# あった（当時は突き合わせが product を取り違え現物注文を見つけられなかった）。
+# ここで Code に対処法を添えておけば、次に起きたとき即座に原因がわかる。
+ORDER_ERROR_HINTS = {
+    2:      "口座番号未存在。AccountType（口座区分：2=一般/4=特定/12=法人）が実際の口座と合っているか確認",
+    21:     "買付余力不足。使用可能額に対し注文金額が大きすぎます（資金・使用上限の設定を確認）",
+    17:     "呼値不正。指値が銘柄の呼値（価格の刻み）に合っていません",
+    18:     "制限値幅超え。ストップ高/安の値幅を超える指値です",
+    100031: "預り区分エラー。現物買いは FundType='02'(保護) が必要。銘柄により受け付けない場合あり",
+    100368: "信用新規注文抑止。市場や銘柄で信用新規が制限されています（現物なら CashMargin=1 か確認）",
+}
+
+
 class KabuApiError(RuntimeError):
     """kabuステーションAPIがエラーを返した。
 
@@ -45,10 +62,18 @@ class KabuApiError(RuntimeError):
         self.message = message
         self.path = path
         self.body_text = body_text
+        # Code は文字列で返ることがあるので数値化して照合する
+        self.hint = None
+        try:
+            self.hint = ORDER_ERROR_HINTS.get(int(code)) if code is not None else None
+        except (TypeError, ValueError):
+            self.hint = None
         if code is not None or message:
             detail = f"Code={code} {message}"
         else:
             detail = body_text[:300] if body_text else "本文なし"
+        if self.hint:
+            detail += f"（対処: {self.hint}）"
         super().__init__(f"HTTP {status} {path} ← {detail}")
 
 

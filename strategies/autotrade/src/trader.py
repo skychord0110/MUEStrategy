@@ -182,13 +182,16 @@ class AutoTrader:
             return
 
         board = self.boards.get(symbol) or {}
+        fund_type = cap.get("fund_type_cash_buy")   # None なら order_builder の既定
         if limit_price is None:
             order = ob.entry_market_buy(symbol, r.quantity,
-                                        account_type=cap.get("account_type", 4))
+                                        account_type=cap.get("account_type", 4),
+                                        fund_type=fund_type)
             how = "成行"
         else:
             order = ob.entry_limit_buy(symbol, r.quantity, float(limit_price),
-                                       account_type=cap.get("account_type", 4))
+                                       account_type=cap.get("account_type", 4),
+                                       fund_type=fund_type)
             how = (f"指値{limit_price}円"
                    f"（売り気配{board.get('ask') or '—'} / "
                    f"{'即約定の見込み' if self._can_hit_ask(symbol, limit_price) else '約定待ち'}）")
