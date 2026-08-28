@@ -197,6 +197,63 @@ def test_known_error_code_gets_hint():
     assert e.hint is None and "999999" in str(e)
 
 
+# ── 4. 発注先の市場（Exchange）──────────────────────────────────────
+def test_new_orders_do_not_use_tse():
+    """新規発注に東証(1)を使わないこと。
+
+    仕様書 RequestSendOrder:「通常時に東証を指定しての新規発注はできません」。
+    2026-08-28に4199・6217が Code=100378「指定された市場でのお取引はお受け
+    できません」で連続失敗した。既定は SOR(9)。
+    """
+    assert ob.order_exchange() == ob.EXCHANGE_SOR == 9
+    o = ob.entry_limit_buy("4199", 100, 826.0)
+    assert o["Exchange"] == 9, "新規買いが東証(1)のまま"
+
+
+def test_entry_and_exit_use_the_same_market():
+    """新規と決済で市場が食い違わないこと。
+
+    仕様書:「東証で保有している建玉をSORまたは東証+では返済できません」。
+    新規は trader.py、決済は position_manager.py と組み立て場所が分かれるため、
+    ここがずれると建てた玉を決済できなくなる。
+    """
+    try:
+        ob.configure_exchange(27)
+        buy = ob.entry_limit_buy("4199", 100, 826.0)
+        for sell in (ob.take_profit_sell("4199", 100, 850.0),
+                     ob.stop_hit_bid_sell("4199", 100, 810.0),
+                     ob.close_out_sell("4199", 100, 820.0),
+                     ob.close_out_moc_sell("4199", 100)):
+            assert sell["Exchange"] == buy["Exchange"] == 27
+    finally:
+        ob.configure_exchange(9)
+
+
+def test_exchange_is_configurable_and_validated():
+    try:
+        assert ob.configure_exchange(27) == 27
+        assert ob.entry_market_buy("4199", 100)["Exchange"] == 27
+        assert ob.configure_exchange(None) == 27      # 未指定なら据え置き
+        try:
+            ob.configure_exchange(99)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("不正な市場コードが通ってしまった")
+        assert ob.order_exchange() == 27, "検証に失敗した値で上書きされている"
+    finally:
+        ob.configure_exchange(9)
+
+
+def test_tse_still_allowed_explicitly():
+    """メンテナンス時の退避先として東証(1)も設定はできること（既定にしないだけ）。"""
+    try:
+        assert ob.configure_exchange(1) == 1
+        assert ob.entry_limit_buy("4199", 100, 826.0)["Exchange"] == 1
+    finally:
+        ob.configure_exchange(9)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

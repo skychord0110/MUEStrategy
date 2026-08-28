@@ -71,6 +71,62 @@ FUND_TYPE_BUY = "AA"       # 信用代用（本口座の現物株式の預り区
 FUND_TYPE_SELL = "  "      # 半角スペース2つ
 VALID_FUND_TYPES_BUY = ("02", "AA")
 
+# 発注先の市場（Exchange）。仕様書 RequestSendOrder より:
+#   1=東証 / 3=名証 / 5=福証 / 6=札証 / 9=SOR / 27=東証+
+# そして次の但し書きが付いている。
+#   「※SORまたは、東証+がメンテナンス中は現物のみ東証への指定が可能です。
+#     通常時に東証を指定しての新規発注はできません。」
+# つまり **1（東証）は新規発注には使えない**。2026-08-28に4199と6217が
+# Code=100378「指定された市場でのお取引はお受けできません」で連続失敗したのはこれが原因で、
+# それ以前の実発注が一度も成立していなかったのも同じ理由と考えられる。
+#
+# 注意: 板・銘柄・歩み値（/board /symbol /timeandsales）は逆に
+#   「※SOR市場は取扱っておりません」と明記されている。**市場データ側は 1 のまま**にすること。
+#   ここで定義しているのは注文の宛先だけ。
+EXCHANGE_TSE = 1           # 東証。新規発注には使えない（メンテナンス時の現物のみ例外）
+EXCHANGE_NSE = 3           # 名証
+EXCHANGE_FSE = 5           # 福証
+EXCHANGE_SSE = 6           # 札証
+EXCHANGE_SOR = 9           # SOR（複数市場から有利な方へ自動執行）
+EXCHANGE_TSE_PLUS = 27     # 東証+
+VALID_EXCHANGES = (EXCHANGE_TSE, EXCHANGE_NSE, EXCHANGE_FSE, EXCHANGE_SSE,
+                   EXCHANGE_SOR, EXCHANGE_TSE_PLUS)
+
+# 実際に使う市場。設定から一度だけ差し替える（configure_exchange）。
+#
+# なぜモジュール1箇所で持つか: 仕様書に
+#   「東証で保有している建玉をSORまたは東証+では返済できませんのでご注意ください」
+# とある。新規と決済で市場が食い違うと**建てた玉を決済できなくなる**。
+# 新規は trader.py、決済は position_manager.py と組み立て場所が分かれているため、
+# 引数で渡す方式だと片方だけ変え忘れる余地が残る。値を1つしか持てない形にして、
+# 食い違いを構造的に起こせなくしている。
+_ORDER_EXCHANGE = EXCHANGE_SOR
+
+
+def configure_exchange(value, log=None):
+    """発注先の市場を設定する。起動時に1回だけ呼ぶ。
+
+    None や空を渡した場合は既定（SOR）のまま。
+    """
+    global _ORDER_EXCHANGE
+    if value in (None, ""):
+        return _ORDER_EXCHANGE
+    v = int(value)
+    if v not in VALID_EXCHANGES:
+        raise ValueError(
+            f"不正な市場コード: {v}（有効値: {VALID_EXCHANGES}）")
+    if v == EXCHANGE_TSE and log is not None:
+        log.warning(
+            "発注先の市場に東証(1)が指定されています。仕様上、SOR/東証+が"
+            "メンテナンス中でない限り新規発注は Code=100378 で拒否されます")
+    _ORDER_EXCHANGE = v
+    return v
+
+
+def order_exchange() -> int:
+    """いま発注に使う市場コード。"""
+    return _ORDER_EXCHANGE
+
 
 def _price_value(price):
     """Price は数値で送る。成行は0。"""
@@ -82,12 +138,14 @@ def _price_value(price):
 
 
 def build_cash_order(symbol, side, qty, front_order_type, price=None,
-                     exchange=1, account_type=4, expire_day=0, fund_type=None):
+                     exchange=None, account_type=4, expire_day=0, fund_type=None):
     """現物注文のリクエストボディを組み立てる。
 
     side: SIDE_BUY / SIDE_SELL
     front_order_type: FRONT_MARKET / FRONT_LIMIT / FRONT_MOC_AFTERNOON など
     price: 指値価格。成行・引成の場合は None（0が入る）
+    exchange: 発注先の市場。None なら configure_exchange() で設定した値（既定SOR）。
+              新規と決済で食い違うと建玉を返済できなくなるため、通常は指定しない。
     fund_type: 現物買いの預り区分を上書きする（"02" / "AA"）。None なら既定を使う。
                現物売りは常に半角スペース2つ（仕様）で、ここでは指定できない。
     """
@@ -109,9 +167,12 @@ def build_cash_order(symbol, side, qty, front_order_type, price=None,
                 f"現物買いの FundType は {VALID_FUND_TYPES_BUY} のいずれか: {fund!r}")
     else:
         fund = FUND_TYPE_SELL
+    ex = _ORDER_EXCHANGE if exchange is None else int(exchange)
+    if ex not in VALID_EXCHANGES:
+        raise ValueError(f"不正な市場コード: {ex}（有効値: {VALID_EXCHANGES}）")
     return {
         "Symbol": str(symbol),
-        "Exchange": int(exchange),
+        "Exchange": ex,
         "SecurityType": SECURITY_TYPE_STOCK,
         "Side": side,
         "CashMargin": CASH_MARGIN_CASH,

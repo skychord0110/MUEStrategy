@@ -44,6 +44,13 @@ class AutoTrader:
         self._dry_seq = 0
         self._last_poll = None
         self._last_balance_refresh = None
+        # 発注先の市場を1箇所で決める。新規（ここ）と決済（position_manager）で
+        # 食い違うと建玉を返済できなくなるため、値はモジュール側に持たせる。
+        ex = ob.configure_exchange(
+            (self.config.get("market") or {}).get("exchange"), log=self.log)
+        self.log.info("発注先の市場: %s", {ob.EXCHANGE_SOR: "SOR(9)",
+                                          ob.EXCHANGE_TSE_PLUS: "東証+(27)",
+                                          ob.EXCHANGE_TSE: "東証(1)"}.get(ex, ex))
 
     # ── 約定音 ──
 
