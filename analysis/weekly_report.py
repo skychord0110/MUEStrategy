@@ -107,7 +107,11 @@ def week_of(d):
 
 
 # ── 1. 仮想売買の抽出 ───────────────────────────────────────────────
-def parse_trades():
+def parse_trades(exclude_if_estimated=False):
+    """exclude_if_estimated=True で、接続断時にログへ直接追記した『もし稼働して
+    いたら』の推計トレード（トリガーに [IF補完] が付く）を除外する。
+    実約定・実ログ由来のトレードだけと、推計込みの両方を見比べたい週に使う。
+    """
     trades, open_pos = [], defaultdict(deque)
     disconnects = Counter()
     for name in sorted(os.listdir(LOGDIR)):
@@ -122,6 +126,8 @@ def parse_trades():
                 m = RE_ENTRY.match(line)
                 if m:
                     d, t, strat, sym, trig, px = m.groups()
+                    if exclude_if_estimated and "[IF補完]" in trig:
+                        continue
                     open_pos[(d, strat, sym)].append(
                         {"date": d, "entry_time": t, "strategy": strat,
                          "symbol": sym, "trigger": trig, "entry_px": float(px)})
@@ -437,19 +443,28 @@ def main():
     ap.add_argument("--refetch", action="store_true", help="取得済みでも取り直す")
     ap.add_argument("--lookback", type=int, default=LOOKBACK_DAYS,
                     help="シグナル検証で遡る日数（Yahooの5分足は約60日まで）")
+    ap.add_argument("--exclude-if-estimated", action="store_true",
+                    help="接続断のif推計トレード（トリガーに[IF補完]）を除いて集計する")
+    ap.add_argument("--out-tag", default=None,
+                    help="出力ディレクトリ/ファイル名に使うタグ（省略時は--date）。"
+                         "同じ--dateで条件違いの2パターンを別々に出したいときに使う")
     args = ap.parse_args()
 
-    tag = args.date
+    tag = args.out_tag or args.date
     outdir = os.path.join(BASE, "output", tag)
     os.makedirs(outdir, exist_ok=True)
-    since = (datetime.strptime(tag, "%Y-%m-%d")
+    since = (datetime.strptime(args.date, "%Y-%m-%d")
              - timedelta(days=args.lookback)).strftime("%Y-%m-%d")
     out = [f"# 週次メトリクス {tag}", "",
            "このファイルは `analysis/weekly_report.py` が機械的に出した**数字だけ**。",
            "解釈・提案は `analysis_result_" + tag + ".md` に人が書く。", ""]
+    if args.exclude_if_estimated:
+        out.append("_接続断のif推計トレード（[IF補完]）を除外して集計。"
+                    "実約定・実ログ由来のトレードのみ。_")
+        out.append("")
 
     print(f"[1/5] 仮想売買の抽出 …")
-    trades, disc = parse_trades()
+    trades, disc = parse_trades(exclude_if_estimated=args.exclude_if_estimated)
     print(f"      {len(trades)}件 -> {write_trades(trades, outdir, tag)}")
 
     print(f"[2/5] 集計 …")
@@ -474,7 +489,7 @@ def main():
             print(f"[4/5] 取得済みを使う: {bars_path}")
         else:
             print(f"[4/5] 5分足を取得（{len(symbols)}銘柄）…")
-            _, errs = fetch_bars(symbols, since, tag, bars_path)
+            _, errs = fetch_bars(symbols, since, args.date, bars_path)
             if errs:
                 print(f"      取得できず {len(errs)}件: "
                       + ", ".join(s for s, _ in errs[:8]))
