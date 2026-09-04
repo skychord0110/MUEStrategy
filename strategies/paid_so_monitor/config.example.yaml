@@ -1,0 +1,20 @@
+# 有償ストックオプション（業績条件付）×事前下落 モニタの設定例。コピーして config.yaml を作成する。
+# APIキーは不要（TDnet非公式ミラー・Yahoo Financeともに認証不要）。
+
+# ── TDnet（非公式ミラーAPI: webapi.yanoshin.jp） ──
+tdnet:
+  lookback_days: 30      # 初回/明示指定がない場合に遡ってチェックする日数
+  chunk_days: 7          # 1回のAPI呼び出しでカバーする日数（超えると空応答になるため7を推奨）
+  request_interval: 0.15 # API呼び出しの間隔（秒）
+
+# ── 開示のスクリーニング条件 ──
+screen:
+  require_keywords: ["有償", "ストックオプション"]   # タイトルに全て含まれること
+  require_title_contains: "発行に関するお知らせ"      # 初回付与の公告のみ（内容確定等は除く）
+  exclude_words: ["内容確定", "内容の確定", "訂正", "変更",
+                  "消滅", "行使", "消却", "放棄", "割当に関する内容等確定"]
+  performance_keyword: "業績"          # このキーワードを含めば「業績条件付き」とみなす
+  require_performance_condition: true  # false にすると業績条件なしも候補に含める
+                                        # （検証では業績条件なしは一貫してマイナスだったため既定true）
+  decline_lookback_days: 182  # 「発表前」何日分の下落率を見るか（既定182日≒6ヶ月）
+  min_decline_pct: 20.0       # この%以上下落していれば通知（検証では20%と30%で勝率69%/75%）

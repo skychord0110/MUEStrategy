@@ -143,12 +143,15 @@ def row(label, s):
 HEAD = "| 条件 | 件数 | 勝率 | 平均 | 期待値 |\n|---|---:|---:|---:|---:|"
 
 
-def main():
-    alerts, bars = load_alerts(), load_bars()
-    # 午後のUNDER急増だけを土台にする（午前は既存分析で優位性が無い）
+def build_records(alerts, bars, afternoon_only):
+    """UNDER急増アラートに歩み値由来の特徴量を紐づける。
+
+    afternoon_only=True: 従来どおり13時以降だけ（午後は既存分析で優位性あり）
+    afternoon_only=False: 終日（午前を含む優位性を確認する用）
+    """
     recs, seen = [], set()
     for a in alerts:
-        if int(a["time"][:2]) < 13:
+        if afternoon_only and int(a["time"][:2]) < 13:
             continue
         key = (a["date"], a["sym"])
         if key in seen:
@@ -167,6 +170,13 @@ def main():
         if r is None:
             continue
         recs.append({**a, **f, "ret": r})
+    return recs
+
+
+def main():
+    alerts, bars = load_alerts(), load_bars()
+    # 午後のUNDER急増だけを土台にする（午前は既存分析で優位性が無い）
+    recs = build_records(alerts, bars, afternoon_only=True)
 
     dates = sorted({r["date"] for r in recs})
     target = set(dates[-TARGET_DAYS:])
@@ -221,10 +231,56 @@ def main():
     else:
         out.append("| （なし） | | | | |")
 
+    # ── 追加: 午前を含む終日ベースでも同じ確認条件が効くか ──────────────
+    # 午前単独は既存分析で優位性が無い（09時台+0.09〜0.16%点）が、それは
+    # 「フィルタなしの午前」の話。VWAP乖離などの確認条件を重ねれば午後と同様に
+    # 選別できるかもしれない、という仮説をここで検証する。
+    recs_all = build_records(alerts, bars, afternoon_only=False)
+    dates_all = sorted({r["date"] for r in recs_all})
+    target_all = set(dates_all[-TARGET_DAYS:])
+    hold_all = set(dates_all[:-TARGET_DAYS])
+    Ta = [r for r in recs_all if r["date"] in target_all]
+    Ha = [r for r in recs_all if r["date"] in hold_all]
+    Ta_am = [r for r in Ta if r["hour"] < 13]
+    Ha_am = [r for r in Ha if r["hour"] < 13]
+
+    out += ["", "## 午前を含む終日ベース: 午前だけを確認条件で選別できるか", "",
+            f"対象（終日）{len(recs_all)}件のうち午前(9-12時) "
+            f"判定期間{len(Ta_am)}件・検証期間{len(Ha_am)}件", "",
+            "### 午前(9-12時)・確認条件なし", "", HEAD,
+            row("判定期間", stats([r["ret"] for r in Ta_am])),
+            row("検証期間", stats([r["ret"] for r in Ha_am])), ""]
+
+    out += ["### 午前(9-12時)に確認条件を1つずつ足す", "", HEAD]
+    good_am = []
+    for name, fn in conds:
+        if "時台" in name:            # 時間帯条件は午後専用なのでここでは飛ばす
+            continue
+        stt = stats([r["ret"] for r in Ta_am if fn(r)])
+        sth = stats([r["ret"] for r in Ha_am if fn(r)])
+        out.append(row(f"判定 {name}", stt))
+        out.append(row(f"　検証 {name}", sth))
+        if stt and stt["n"] >= 15 and stt["wr"] >= 70 and stt["ev"] > 0:
+            good_am.append((name, fn, stt, sth))
+    out.append("")
+    out += ["### 午前(9-12時)で判定期間 勝率70%以上・n>=15・期待値プラス", "", HEAD]
+    if good_am:
+        for name, _, stt, sth in sorted(good_am, key=lambda x: -x[2]["wr"]):
+            out.append(row(name, stt))
+            out.append(row("　検証期間での再現", sth))
+    else:
+        out.append("| （なし） | | | | |")
+    out.append("")
+
     path = os.path.join(OUTDIR, "combo_report.md")
     open(path, "w", encoding="utf-8", newline="\n").write("\n".join(out) + "\n")
     print("\n".join(out[:12]))
-    print(f"\n条件を満たしたもの: {len(good)}件")
+    print(f"\n条件を満たしたもの（午後ベース）: {len(good)}件")
+    print(f"条件を満たしたもの（午前ベース）: {len(good_am)}件")
+    for name, _, stt, sth in sorted(good_am, key=lambda x: -x[2]["wr"]):
+        hv = f"検証 n={sth['n']} {sth['wr']:.1f}% {sth['ev']:+.2f}%" if sth else "検証なし"
+        print(f"  [午前] {name:<26} 判定 n={stt['n']:>3} {stt['wr']:>5.1f}% "
+              f"{stt['ev']:+.2f}%  ({hv})")
     for name, _, stt, sth in sorted(good, key=lambda x: -x[2]["wr"]):
         hv = f"検証 n={sth['n']} {sth['wr']:.1f}% {sth['ev']:+.2f}%" if sth else "検証なし"
         print(f"  {name:<26} 判定 n={stt['n']:>3} {stt['wr']:>5.1f}% "
