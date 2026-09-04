@@ -30,6 +30,7 @@ import yaml
 from kabu_client import KabuClient
 import account_snapshot
 import notifier
+from vwap import VwapTracker
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STRATEGIES_ROOT = os.path.normpath(os.path.join(BASE_DIR, "..", ".."))
@@ -185,7 +186,8 @@ def build_autotrader(config: dict, client, log):
     # 追加されたときに損切り・利確幅が引き継がれるようここにも入れておく
     # （autotrade側の strategies に無い間は _active() が False を返すので発注されない）
     for name in ("afternoon_reversal", "afternoon_reversal_ranked",
-                 "panic_rebound", "confluence", "panic_rebound_wide"):
+                 "panic_rebound", "confluence", "panic_rebound_wide",
+                 "vwap_discount_reversal"):
         s = (config.get("strategies") or {}).get(name) or {}
         sp[name] = {"stop_loss_pct": s.get("stop_loss_pct", 2.0),
                     "take_profit_pct": s.get("take_profit_pct", 2.0)}
@@ -286,6 +288,9 @@ class RunnerEngine:
         self._external = []
         self._external_lock = threading.Lock()
         self._last_price = {}       # symbol -> 直近に観測した現在値
+        # 当日VWAP。板とは別の角度から需給を見るため、PUSHのたびに積み上げる。
+        # 検知ごとに持たせるとズレるので、エンジンが1つ持って全戦略へ配る。
+        self.vwap = VwapTracker()
         strategies_cfg = config.get("strategies", {})
 
         sl = strategies_cfg.get("small_lot_sell_detector", {})
@@ -334,7 +339,8 @@ class RunnerEngine:
         pr = strategies_cfg.get("panic_rebound", {})
         pw = strategies_cfg.get("panic_rebound_wide", {})
         af = strategies_cfg.get("accumulation_follow", {})
-        if any(c.get("enabled") for c in (ar, rk, cf, pr, pw, af)):
+        vd = strategies_cfg.get("vwap_discount_reversal", {})
+        if any(c.get("enabled") for c in (ar, rk, cf, pr, pw, af, vd)):
             ai_mod = load_detector_module("AIStrategys")
             if ar.get("enabled"):
                 self.ai_strategies["afternoon_reversal"] = ai_mod.AfternoonReversalStrategy(
@@ -377,6 +383,18 @@ class RunnerEngine:
                 )
             # 幅広版: 検知は panic_rebound と同じで、損切り・利確の幅だけが違う。
             # PaperBookはインスタンスごとに独立しているので建玉は混ざらない。
+            # VWAP乖離版: 検知は afternoon_reversal と同じUNDER急増だが、
+            # 「当日VWAPを一定%以上下回っている」ことを追加で要求する。
+            if vd.get("enabled"):
+                self.ai_strategies["vwap_discount_reversal"] = \
+                    ai_mod.VwapDiscountReversalStrategy(
+                        entry_start=parse_time(vd.get("entry_start", "13:00")),
+                        entry_end=parse_time(vd.get("entry_end", "15:00")),
+                        stop_loss_pct=vd.get("stop_loss_pct", 2.0),
+                        take_profit_pct=vd.get("take_profit_pct", 2.0),
+                        min_entry_price=vd.get("min_entry_price", 500.0),
+                        min_discount_pct=vd.get("min_discount_pct", 1.0),
+                    )
             if af.get("enabled"):
                 self.ai_strategies["accumulation_follow"] = \
                     ai_mod.AccumulationFollowStrategy(
@@ -436,6 +454,7 @@ class RunnerEngine:
         low_price = data.get("LowPrice")
         if current_price is not None:
             self._last_price[str(symbol)] = current_price
+        self.vwap.update(symbol, current_price, trading_volume, now)
 
         # 注意: kabuステーションAPIは BidPrice=最良「売」気配 / AskPrice=最良「買」気配 と
         # 一般的な英語の慣例と逆の命名のため、誤解の余地がないBuy1/Sell1〜10を使う。
@@ -486,6 +505,12 @@ class RunnerEngine:
             # 別スレッドの検知ぶんも、この時点で同じ土俵に載せる。
             # 対象銘柄のPUSHを待たずに配れるよう、メッセージの銘柄を問わず毎回引き取る。
             base_results = list(results) + self._drain_external(now)
+            # 各アラートに当日VWAPからの乖離を添える。値動きから需給を読む
+            # 戦略（VWAP乖離版）がこれを見る。取れないうちは None のまま。
+            for _bn, _ba in base_results:
+                if isinstance(_ba, dict) and _ba.get('symbol') is not None:
+                    _ba['vwap_discount_pct'] = self.vwap.discount_pct(
+                        _ba['symbol'], _ba.get('price'), now)
             for name, strat in self.ai_strategies.items():
                 for alert in strat.on_price(symbol, current_price, now):
                     results.append((name, alert))

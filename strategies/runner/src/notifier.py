@@ -58,12 +58,13 @@ STRATEGY_LABELS = {
     "panic_rebound_wide": "AI投げ売り反発(幅広)",
     "periodic_buy_zscore": "定期買い集め",
     "accumulation_follow": "AI買い集め追随",
+    "vwap_discount_reversal": "AI VWAP乖離反発",
 }
 
 # AIストラテジー（仮想売買）のストラテジー名
 AI_PAPER_STRATEGIES = ("afternoon_reversal", "afternoon_reversal_ranked",
                        "confluence", "panic_rebound", "panic_rebound_wide",
-                       "accumulation_follow")
+                       "accumulation_follow", "vwap_discount_reversal")
 
 PANIC_STAGE_LABELS = {
     "ABSORBED": "投げ売り吸収",

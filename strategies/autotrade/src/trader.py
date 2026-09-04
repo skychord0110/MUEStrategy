@@ -366,11 +366,61 @@ class AutoTrader:
             else:
                 for pm in self.positions.values():
                     if pm.order_id == oid:
-                        pm.on_filled(filled, float(pm.last_order_price or 0), now)
-                        self.log.warning("[自動売買/約定] %s %s株 → 損益 %+.2f%%",
-                                         pm.symbol, filled, pm.pnl_pct() or 0)
-                        self._sound("profit" if (pm.pnl_pct() or 0) > 0 else "loss")
+                        self._settle_exit(pm, oid, filled, st.get("avg_price"),
+                                          product, now)
                         break
+
+    def _remaining_qty(self, symbol, product):
+        """建玉照会でこの銘柄の未決済数量（LeavesQty合計）を返す。
+
+        取得できなければ None（決済確定を保留する）。決済したかどうかは
+        注文状態ではなく実際の建玉を真実として判断するために使う。
+        """
+        try:
+            total = 0.0
+            for p in self.account.client.get_positions(product) or []:
+                if str(p.get("Symbol")) == str(symbol):
+                    total += float(p.get("LeavesQty") or 0)
+            return total
+        except Exception as e:
+            self.log.warning("[自動売買] 建玉照会に失敗 %s: %s", symbol, e)
+            return None
+
+    def _settle_exit(self, pm, oid, filled, avg_price, product, now):
+        """決済注文が終了(State=5)で戻ってきたときの確定処理。
+
+        建玉照会を真実として突き合わせ、ポジションと約定の整合を取る:
+          - 建玉が残る     → まだ決済しきれていない。決済扱いにせず注文IDだけ外す
+                              （phantomな決済・損益を記録しない）
+          - 建玉ゼロ       → 実約定価格(avg_price)で損益を確定。取れなければ注文価格で暫定
+          - 照会不能(None) → 確定を保留（次ポールで再確認）。憶測で埋めない
+        """
+        remaining = self._remaining_qty(pm.symbol, product)
+        if remaining is None:
+            self.log.warning("[自動売買] %s 決済注文は終了したが建玉照会に失敗。"
+                             "決済確定を保留し次回再確認します", pm.symbol)
+            return
+        if remaining > 0:
+            self.log.warning("[自動売買] %s 決済注文は終了したが建玉%s株が残存。"
+                             "未決済とみなし、この注文を無効化して手仕舞いを継続します",
+                             pm.symbol, remaining)
+            pm.on_order_canceled(oid)
+            return
+        # 建玉ゼロ = 本当に決済済み。実約定価格で損益を確定する。
+        if avg_price is not None:
+            price = float(avg_price)
+        else:
+            price = float(pm.last_order_price or 0)
+            self.log.warning("[自動売買] %s 約定明細から約定価格を取得できず、"
+                             "注文価格%sで暫定記録します", pm.symbol, price)
+        # 建玉ゼロ＝全量決済済みなので、未記録の全量を実約定価格で確定してCLOSEDにする。
+        # （部分約定を跨いで最終約定価格で丸める点は稀。跨いだ場合はログで追える）
+        already = sum(f["qty"] for f in pm.fills)
+        record_qty = pm.qty - already if pm.qty > already else filled
+        pm.on_filled(record_qty, price, now)
+        self.log.warning("[自動売買/約定] %s %s株 @%s → 損益 %+.2f%%",
+                         pm.symbol, record_qty, price, pm.pnl_pct() or 0)
+        self._sound("profit" if (pm.pnl_pct() or 0) > 0 else "loss")
 
     def _lookup_entry_price(self, symbol, product):
         try:

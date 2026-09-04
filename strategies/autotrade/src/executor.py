@@ -35,6 +35,29 @@ STATE_DONE = 5         # 終了（発注エラー・取消済・全約定・失�
 
 ACTIVE_STATES = (STATE_WAITING, STATE_PROCESSING, STATE_PROCESSED, STATE_CANCELING)
 
+# GET /orders の Details[].RecType。8=約定（公式リファレンス kabu_STATION_API.yaml で確認）。
+# 約定明細には Price(値段) と Qty(数量) が入る。
+REC_EXEC = 8
+
+
+def avg_exec_price(order: dict):
+    """注文の約定明細（Details, RecType=8）から数量加重の平均約定単価を返す。
+
+    決済損益は「注文（指値）価格」ではなく実際の約定価格で出すべきなので、
+    約定した明細だけを集めて加重平均する。約定明細が無い／価格が取れない場合は
+    None を返す（＝約定価格を確定できない。呼び出し側で建玉照会と突き合わせる）。
+    """
+    num = den = 0.0
+    for d in (order.get("Details") or []):
+        if d.get("RecType") != REC_EXEC:
+            continue
+        px, qty = d.get("Price"), d.get("Qty")
+        if px is None or not qty:
+            continue
+        num += float(px) * float(qty)
+        den += float(qty)
+    return num / den if den else None
+
 
 class OrderBlocked(Exception):
     """安全弁により発注が止められた。"""
@@ -276,7 +299,8 @@ class Executor:
             state = o.get("State")
             filled = float(o.get("CumQty") or 0)
             qty = float(o.get("OrderQty") or 0)
-            out.append({"order_id": oid, "state": state, "filled": filled, "qty": qty})
+            out.append({"order_id": oid, "state": state, "filled": filled,
+                        "qty": qty, "avg_price": avg_exec_price(o)})
             if state == STATE_DONE:
                 self.log.info("[注文終了] OrderId=%s 約定%s/%s株", oid, filled, qty)
                 self.open_orders.pop(oid, None)

@@ -72,6 +72,8 @@ AI_STRATEGIES = [
      ("strategies", "afternoon_reversal_ranked")),
     ("投げ売り反発 幅広",  "panic_rebound_wide",  ("strategies", "panic_rebound_wide")),
     ("買い集め追随",       "accumulation_follow", ("strategies", "accumulation_follow")),
+    ("VWAP乖離反発",      "vwap_discount_reversal",
+     ("strategies", "vwap_discount_reversal")),
 ]
 
 # 検知ストラテジーをONにしたとき、一緒にONにする仮想売買戦略。
@@ -93,6 +95,7 @@ SUB_FROM = {
     "panic_rebound_wide": ("panic_rebound_wide",),
     "confluence": ("confluence",),
     "accumulation_follow": ("accumulation_follow",),
+    "vwap_discount_reversal": ("vwap_discount_reversal",),
     "panic_sell_detector": ("panic_rebound", "panic_rebound_wide"),
     "periodic_buy_zscore": ("accumulation_follow",),
 }

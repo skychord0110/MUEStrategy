@@ -185,6 +185,67 @@ class AfternoonReversalStrategy:
         return [entry]
 
 
+class VwapDiscountReversalStrategy(AfternoonReversalStrategy):
+    """VWAP乖離を条件に足した午後の引け戻り戦略（仮想売買）。
+
+    エントリー: AfternoonReversalStrategy と同じUNDER急増に加えて、
+                そのときの現在値が**当日VWAPを min_discount_pct% 以上下回って
+                いる**ことを要求する。
+    決済: 損切り/利確/大引け（土台と同じ）
+
+    【読み】
+      UNDER急増  … 下値に大口の買い注文が積まれた（板が示す需給）
+      VWAP-1%以下 … その日の平均取得コストより1%以上安い（歩み値が示す需給）
+    両方が重なるのは「売られ過ぎた水準に、大口の買いが待っている」状態。
+    板だけ・値動きだけでは見えないものを、2つの情報源で確認する。
+
+    【根拠】2026-08-29の検証（analysis/research_verify.py で再現できる）
+      土台（午後のUNDER急増・利確+2%/損切り-2%）に対し、VWAP-1%以下で絞ると:
+
+        直近20営業日   n=37  勝率78.4%  期待値+0.79%
+        それ以前       n=18  勝率83.3%  期待値+0.76%
+        除外された側   n=45  勝率55.6%  期待値-0.15%
+
+      過剰適合でないと判断した根拠:
+        ・しきい値を 0/-0.5/-1.0/-1.5% と動かすと勝率が 69→73→78→84% と
+          単調に改善する（1点だけ跳ねるのではない）。判定期間・検証期間の双方で。
+        ・7週すべて期待値プラス（+0.19〜+1.13%）。特定の週が作った数字ではない。
+        ・55件が29銘柄に散っている（上位3銘柄で22%）。
+        ・決済ルールを6通り試して5通りで勝率76〜80%。1つの出口に依存しない。
+        ・**除外された側が期待値マイナス**で、フィルタが実際に選り分けている。
+
+    【ライブとの差】検証はYahooの5分足から計算したVWAP、実運用はPUSHの
+    ティックから積み上げたVWAP（vwap.py）。後者のほうが細かいが、
+    寄り付きの板寄せぶんを寄り値で概算する点など完全には一致しない。
+    """
+
+    def __init__(self, entry_start: dtime = dtime(13, 0),
+                 entry_end: dtime = dtime(15, 0),
+                 stop_loss_pct: float = 2.0, take_profit_pct: float = 2.0,
+                 min_entry_price: float = 500.0,
+                 min_discount_pct: float = 1.0):
+        super().__init__(entry_start=entry_start, entry_end=entry_end,
+                         stop_loss_pct=stop_loss_pct,
+                         take_profit_pct=take_profit_pct,
+                         min_entry_price=min_entry_price)
+        self.min_discount_pct = min_discount_pct
+
+    def on_signal(self, source: str, alert: dict, msg_time) -> list:
+        if source != "under_surge_detector":
+            return []
+        # VWAPはランナーがPUSHから積み上げてアラートに載せてくる。
+        # 寄り直後などまだ算出できていない場合は見送る（無条件に入らない）。
+        disc = alert.get("vwap_discount_pct")
+        if disc is None or disc > -self.min_discount_pct:
+            return []
+        out = super().on_signal(source, alert, msg_time)
+        for a in out:
+            if a.get("type") == "ENTRY":
+                a["trigger"] = "UNDER急増+VWAP乖離"
+                a["vwap_discount_pct"] = disc
+        return out
+
+
 class RankedAfternoonReversalStrategy(AfternoonReversalStrategy):
     """午後の下値大口買い・引け戻り（順位優先版）。
 

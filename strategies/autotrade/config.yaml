@@ -83,11 +83,11 @@ capital:
 
   # このシステムが使ってよい上限金額（円）。
   # 残高を参照し、この金額を超えない範囲で発注数量を決める。
-  max_use_amount: 117000
+  max_use_amount: 175000
 
   # 1銘柄あたりの上限金額（円）。max_use_amount 以下で指定する。
   # 同時に複数銘柄を持つ場合の1銘柄あたりの配分。
-  max_amount_per_symbol: 117000
+  max_amount_per_symbol: 175000
 
   # 同時に保有してよい建玉数の上限
   max_positions: 1
