@@ -39,6 +39,32 @@ STRATEGIES_ROOT = os.path.normpath(os.path.join(BASE_DIR, "..", ".."))
 # 中身は停止したいプロセスのPID。他プロセスあて／読めない内容なら無視する。
 STOP_FILE = os.path.normpath(os.path.join(BASE_DIR, "..", "state", "stop.request"))
 
+LIQUID_UNIVERSE_FILE = os.path.normpath(
+    os.path.join(BASE_DIR, "..", "state", "liquid_universe.json"))
+
+
+def _load_liquid_universe(log) -> list:
+    """流動UNDER急増戦略の対象銘柄を state ファイルから読む。
+
+    analysis/research_liquid_universe.py --write が書いたJSONを読む。
+    無い／壊れている場合は空リスト（＝戦略は何もエントリーしない・安全側）。
+    当日より古い日付なら警告するが、そのまま使う（前営業日ぶんで動かすため）。
+    """
+    try:
+        with open(LIQUID_UNIVERSE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        log.warning("流動ユニバースの定義が読めません（%s）。"
+                    "`python analysis/research_liquid_universe.py --write` で作成してください",
+                    LIQUID_UNIVERSE_FILE)
+        return []
+    day = data.get("date")
+    today = datetime.now().strftime("%Y-%m-%d")
+    if day and day != today:
+        log.info("流動ユニバースの定義は %s 時点のものです（今日は %s）。そのまま使います", day, today)
+    return [str(s) for s in (data.get("symbols") or [])]
+
+
 def _stop_requested() -> bool:
     """自分あての停止要求が置かれているか。"""
     try:
@@ -340,7 +366,8 @@ class RunnerEngine:
         pw = strategies_cfg.get("panic_rebound_wide", {})
         af = strategies_cfg.get("accumulation_follow", {})
         vd = strategies_cfg.get("vwap_discount_reversal", {})
-        if any(c.get("enabled") for c in (ar, rk, cf, pr, pw, af, vd)):
+        lu = strategies_cfg.get("liquid_under_surge", {})
+        if any(c.get("enabled") for c in (ar, rk, cf, pr, pw, af, vd, lu)):
             ai_mod = load_detector_module("AIStrategys")
             if ar.get("enabled"):
                 self.ai_strategies["afternoon_reversal"] = ai_mod.AfternoonReversalStrategy(
@@ -415,6 +442,18 @@ class RunnerEngine:
                     min_entry_price=pw.get("min_entry_price", 0.0),
                     stages=tuple(pw.get("stages", ["DUMP"])),
                 )
+            # 流動UNDER急増: 検知は afternoon_reversal と同じUNDER急増だが、終日・
+            # 流動ユニバース限定・大引け決済。対象銘柄は起動時に main() から
+            # set_liquid_universe() で確定する（liquid_universe.json を読む）。
+            if lu.get("enabled"):
+                self.ai_strategies["liquid_under_surge"] = \
+                    ai_mod.LiquidUnderSurgeStrategy(
+                        entry_start=parse_time(lu.get("entry_start", "09:00")),
+                        entry_end=parse_time(lu.get("entry_end", "15:00")),
+                        stop_loss_pct=lu.get("stop_loss_pct", 3.0),
+                        take_profit_pct=lu.get("take_profit_pct"),  # 既定は利確なし＝大引け
+                        min_entry_price=lu.get("min_entry_price", 500.0),
+                    )
 
     def submit_external(self, source: str, alert: dict) -> None:
         """PUSH以外の経路で出た検知アラートを受け取る（別スレッドから呼ばれる）。
@@ -620,6 +659,22 @@ def main():
             log.info("%s: 銘柄リストの順位を設定しました（上位%d位は即エントリー / "
                      "それ以下は%s以降）", name, strat.top_rank,
                      strat.late_entry_after.strftime("%H:%M"))
+
+    # 流動UNDER急増戦略の対象銘柄を確定する（liquid_universe.json を読む）。
+    # このファイルは analysis/research_liquid_universe.py --write が作る。
+    # 監視銘柄に含まれるものだけを対象にする（登録外の銘柄はPUSHが来ないため）。
+    liquid_strat = engine.ai_strategies.get("liquid_under_surge")
+    if liquid_strat is not None:
+        watched = {str(s["symbol"]) for s in symbols}
+        liquid = _load_liquid_universe(log)
+        usable = sorted(set(liquid) & watched)
+        liquid_strat.set_liquid_universe(usable)
+        if usable:
+            log.info("ボラ高流動銘柄UNDER急増: 対象%d銘柄に確定 %s", len(usable), usable)
+        else:
+            log.warning("ボラ高流動銘柄UNDER急増: 対象銘柄が0件のため何もエントリーしません。"
+                        "`python analysis/research_liquid_universe.py --write` で"
+                        "liquid_universe.json を作り直してください（監視銘柄と重なる合格銘柄が必要）")
     client.unregister_all()
     reg_result = client.register_symbols(symbols)
     log.info("銘柄登録結果: %s", reg_result)

@@ -74,6 +74,8 @@ AI_STRATEGIES = [
     ("買い集め追随",       "accumulation_follow", ("strategies", "accumulation_follow")),
     ("VWAP乖離反発",      "vwap_discount_reversal",
      ("strategies", "vwap_discount_reversal")),
+    ("ボラ高流動銘柄UNDER急増", "liquid_under_surge",
+     ("strategies", "liquid_under_surge")),
 ]
 
 # 検知ストラテジーをONにしたとき、一緒にONにする仮想売買戦略。
@@ -96,6 +98,7 @@ SUB_FROM = {
     "confluence": ("confluence",),
     "accumulation_follow": ("accumulation_follow",),
     "vwap_discount_reversal": ("vwap_discount_reversal",),
+    "liquid_under_surge": ("liquid_under_surge",),
     "panic_sell_detector": ("panic_rebound", "panic_rebound_wide"),
     "periodic_buy_zscore": ("accumulation_follow",),
 }

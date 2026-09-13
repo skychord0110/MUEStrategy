@@ -246,6 +246,56 @@ class VwapDiscountReversalStrategy(AfternoonReversalStrategy):
         return out
 
 
+class LiquidUnderSurgeStrategy(AfternoonReversalStrategy):
+    """流動性の高い銘柄に限定した UNDER急増 デイトレ戦略（仮想売買）。
+
+    エントリー: AfternoonReversalStrategy と同じ UNDER急増 だが、次の2点が違う。
+      1. **終日**（既定 09:00〜15:00）。午後限定にしない。
+      2. **流動ユニバースの銘柄のみ**。起動時に set_liquid_universe() で渡した
+         銘柄集合に含まれるものだけを対象にする。空なら何も入らない（安全側）。
+    決済: 既定は take_profit_pct=None（利確を置かず大引けまで持ち切る）＋保護的な損切り。
+
+    【狙い】資金が増えても発注時のマーケットインパクトを受けにくいよう、監視50銘柄を
+      「時価総額150億以上・直近5日の日足高安差平均3%以上・直近5日すべてで
+       売買代金1億円以上」で絞った少数の流動銘柄だけを売買する。
+
+    【根拠】2026-09-13の検証（analysis/research_liquid_universe.py で流動銘柄を抽出し、
+      analysis/output/2026-09-13/ のアラートをYahoo5分足で独立検証）:
+        流動7銘柄・UNDER急増・全日・大引け決済   n=71  勝率64.8%  期待値+0.73%
+        （参考）全50銘柄・UNDER急増・全日・大引け  n=490 勝率53.7%  期待値+0.25%
+      土台の「UNDER急増＝下値の大口買い」は流動名でむしろ強く出た。一方、投げ売り
+      反発（panic_rebound）は流動名では期待値マイナスで、この戦略には混ぜない。
+
+    【重要・実弾に使ってはいけない理由】
+      独立検証n=71は8週・わずか7銘柄ぶんで、地合い（この期間の上昇基調）を
+      分離していない。別銘柄・複数週でプラスが続くまで仮想売買に留めること。
+    """
+
+    def __init__(self, entry_start: dtime = dtime(9, 0),
+                 entry_end: dtime = dtime(15, 0),
+                 stop_loss_pct: float = 3.0, take_profit_pct=None,
+                 min_entry_price: float = 500.0):
+        super().__init__(entry_start=entry_start, entry_end=entry_end,
+                         stop_loss_pct=stop_loss_pct,
+                         take_profit_pct=take_profit_pct,
+                         min_entry_price=min_entry_price)
+        self.liquid = set()          # 起動時に set_liquid_universe() で確定する
+
+    def set_liquid_universe(self, symbols) -> None:
+        """対象にする流動銘柄を確定する（起動時に1回）。"""
+        self.liquid = {str(s) for s in (symbols or [])}
+
+    def on_signal(self, source: str, alert: dict, msg_time) -> list:
+        # 流動ユニバース外は無視。未設定（空）なら安全側で何も入らない。
+        if str(alert.get("symbol")) not in self.liquid:
+            return []
+        out = super().on_signal(source, alert, msg_time)
+        for a in out:
+            if a.get("type") == "ENTRY":
+                a["trigger"] = "UNDER急増(流動)"
+        return out
+
+
 class RankedAfternoonReversalStrategy(AfternoonReversalStrategy):
     """午後の下値大口買い・引け戻り（順位優先版）。
 
