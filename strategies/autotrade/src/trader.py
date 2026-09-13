@@ -156,6 +156,9 @@ class AutoTrader:
         # 資金は1銘柄ぶんしかないため、両方に出すことはできない。
         #   ・新しい銘柄がすぐ約定する（売り板にぶつけられる）なら、そちらに乗り換える
         #   ・すぐ約定しないなら、いま出している指値をそのまま残して見送る
+        # 乗り換えで取り消した注文の拘束分。kabuの /wallet/cash はこれの解放が
+        # 非同期で遅れるため、こちらで足し戻して数量計算に使う（下の refresh 後）。
+        freed_bp = 0.0
         resting = self._resting_entry()
         if resting is not None:
             oid, info = resting
@@ -173,8 +176,27 @@ class AutoTrader:
             self.log.warning(
                 "[自動売買] %s の指値%s（未約定）を取り消し、すぐ約定できる %s に乗り換えます",
                 info["symbol"], info.get("limit_price"), symbol)
-            self.executor.cancel(oid, "指値の乗り換え")
+            cr = self.executor.cancel(oid, "指値の乗り換え")
+            # 取消が受理されたときだけ乗り換える。受理されなければ元注文の資金は
+            # 拘束されたまま＝Bを出しても弾かれるので、乗り換え自体を中止する
+            # （取りこぼしより、二重発注・管理外建玉を避けることを優先）。
+            cancelled_ok = bool(cr.get("dry_run")) or cr.get("Result") == 0
+            if not cancelled_ok:
+                self.log.warning(
+                    "[自動売買] %s の取消が受理されなかったため %s への乗り換えを中止します"
+                    "（元注文の資金は拘束されたまま）: %s", info["symbol"], symbol, cr)
+                return
             self.pending_entries.pop(oid, None)
+            # 取消で解放される見込みの金額（数量×指値）を余力に足し戻す。
+            # kabuの余力反映は非同期で、取消直後の /wallet/cash には間に合わず、
+            # そのままだと「余力なし」で乗り換え先を取りこぼす（実際に機会損失が発生した）。
+            lp = info.get("limit_price")
+            if lp:
+                freed_bp = float(info["qty"]) * float(lp)
+                self.log.info(
+                    "[自動売買] 取消で解放見込みの %s円 を余力に加算して数量計算します"
+                    "（%s→%s の乗り換え・余力反映のタイムラグ対策）",
+                    f"{freed_bp:,.0f}", info["symbol"], symbol)
 
         # 余力は都度取り直す（他の約定で変動しているため）
         try:
@@ -183,7 +205,8 @@ class AutoTrader:
             self.log.warning("[自動売買] 余力の取得に失敗したためエントリーを見送り: %s", e)
             return
 
-        r, info = self.account.plan_quantity(symbol, price, cap)
+        r, info = self.account.plan_quantity(symbol, price, cap,
+                                             extra_buying_power=freed_bp)
         if not r.ok:
             self.log.info("[自動売買] %s エントリー見送り: %s", symbol, r.reason)
             return

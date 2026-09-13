@@ -23,7 +23,7 @@ class SizingResult:
 
 
 def calc_quantity(price, buying_power, cfg, trading_unit: int = 100,
-                  open_positions: int = 0) -> SizingResult:
+                  open_positions: int = 0, extra_buying_power: float = 0.0) -> SizingResult:
     """発注数量を計算する。
 
     price:         現在値（PUSHで受信した値を使う）
@@ -31,6 +31,10 @@ def calc_quantity(price, buying_power, cfg, trading_unit: int = 100,
     cfg:           config.yaml の capital セクション（dict）
     trading_unit:  売買単位（GET /symbol/{symbol} の TradingUnit）
     open_positions: 現在の建玉数
+    extra_buying_power: APIの買付余力に足し戻す額（円）。
+        乗り換えで直前に取り消した注文の拘束分など、kabu側の /wallet/cash に
+        まだ反映されていない「解放見込みの資金」をここで補う。既定0。
+        （kabuの余力反映は非同期で、取消直後の余力は拘束されたままのため）
     """
     max_use = float(cfg.get("max_use_amount", 0))
     max_per_symbol = float(cfg.get("max_amount_per_symbol", max_use))
@@ -44,7 +48,10 @@ def calc_quantity(price, buying_power, cfg, trading_unit: int = 100,
 
     if buying_power is None:
         return SizingResult(False, reason="買付余力が取得できていない")
-    buying_power = float(buying_power)
+    # 解放見込みの資金を足し戻した「実効の買付余力」で判断する。
+    # 設定の使用上限（max_use_amount 等）は別枠でそのまま効くので、
+    # ここで増えるのは余力制約だけ＝実発注はkabu側でも実資金と照合される。
+    buying_power = float(buying_power) + float(extra_buying_power or 0.0)
 
     if buying_power < min_free:
         return SizingResult(

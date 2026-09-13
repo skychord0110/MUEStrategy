@@ -220,14 +220,20 @@ class AccountView:
             "売買単位・呼値グループは既定値で計算します（数量や指値が狂う可能性）", symbol)
         return False
 
-    def plan_quantity(self, symbol: str, price, cfg_capital: dict):
-        """指定銘柄について、現在値から発注可能数量を計算する（発注はしない）。"""
+    def plan_quantity(self, symbol: str, price, cfg_capital: dict,
+                      extra_buying_power: float = 0.0):
+        """指定銘柄について、現在値から発注可能数量を計算する（発注はしない）。
+
+        extra_buying_power: 取消直後などで /wallet/cash にまだ反映されていない
+            解放見込みの資金（円）を余力に足し戻す。既定0。
+        """
         self.ensure_master(symbol)
         m = self.master.get(str(symbol), {})
         unit = m.get("trading_unit", cfg_capital.get("lot_size", 100))
         held = sizing.count_open_positions(self.positions)
         r = sizing.calc_quantity(price, self.buying_power, cfg_capital,
-                                 trading_unit=unit, open_positions=held)
+                                 trading_unit=unit, open_positions=held,
+                                 extra_buying_power=extra_buying_power)
         grp = m.get("price_range_group", tick_size.DEFAULT_GROUP)
         try:
             tick = tick_size.tick_size(price, grp) if price else None
