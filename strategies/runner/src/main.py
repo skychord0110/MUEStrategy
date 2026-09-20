@@ -188,6 +188,7 @@ def build_autotrader(config: dict, client, log):
         import account as at_account
         import executor as at_executor
         import trader as at_trader
+        import order_builder as at_ob
     except Exception:
         log.exception("自動売買の読み込みに失敗しました（自動売買は無効のまま継続します）")
         return None
@@ -217,7 +218,12 @@ def build_autotrader(config: dict, client, log):
         s = (config.get("strategies") or {}).get(name) or {}
         sp[name] = {"stop_loss_pct": s.get("stop_loss_pct", 2.0),
                     "take_profit_pct": s.get("take_profit_pct", 2.0)}
-    return at_trader.AutoTrader(at_cfg, ex, view, log=log, strategy_params=sp), view
+    # trader.py が実際のエントリー時に使うのと同じ product（現物/信用）で
+    # 初回チェックも行う。以前はここだけ "2"（信用）を決め打ちしており、
+    # 現物運用のこの口座では常に「保有建玉0件」と誤表示していた
+    # （現物建玉があっても信用の残高照会には映らないため）。
+    product = at_ob.product_for_config((at_cfg.get("capital") or {}).get("product"))
+    return at_trader.AutoTrader(at_cfg, ex, view, log=log, strategy_params=sp), view, product
 
 
 def start_periodic_buy_zscore(cfg: dict, log, client=None, engine=None):
@@ -682,9 +688,9 @@ def main():
     # 自動売買（strategies/autotrade）。無効なら None のまま＝仮想売買のみ
     built = build_autotrader(config, client, log)
     if built:
-        engine.autotrader, at_view = built
+        engine.autotrader, at_view, at_product = built
         try:
-            at_view.refresh("2")
+            at_view.refresh(at_product)
         except Exception:
             log.exception("自動売買の初期化に失敗したため無効にします")
             engine.autotrader = None
