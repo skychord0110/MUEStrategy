@@ -31,6 +31,7 @@ from kabu_client import KabuClient
 import account_snapshot
 import notifier
 from vwap import VwapTracker
+import volatility_screen
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STRATEGIES_ROOT = os.path.normpath(os.path.join(BASE_DIR, "..", ".."))
@@ -41,6 +42,55 @@ STOP_FILE = os.path.normpath(os.path.join(BASE_DIR, "..", "state", "stop.request
 
 LIQUID_UNIVERSE_FILE = os.path.normpath(
     os.path.join(BASE_DIR, "..", "state", "liquid_universe.json"))
+VOLATILE_UNIVERSE_FILE = os.path.normpath(
+    os.path.join(BASE_DIR, "..", "state", "volatile_universe.json"))
+
+
+def start_volatile_universe(strat, symbols, cfg: dict, log):
+    """「ボラ急変銘柄」の対象を起動時に確定する（前日までの日足で判定）。
+
+    判定は日ごとに変わる（前日の売買代金・直近の急騰落）ため毎朝やり直す。
+    監視50銘柄の日足取得に30秒ほどかかるので別スレッドで行い、確定するまでは
+    この戦略は何もエントリーしない（対象が空＝安全側）。
+    当日に一度判定していれば（再起動時など）、その結果を即座に使う。
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    watched = [str(s["symbol"]) for s in symbols]
+    try:
+        with open(VOLATILE_UNIVERSE_FILE, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        if saved.get("computed_on") == today:
+            usable = sorted(set(saved.get("symbols") or []) & set(watched))
+            strat.set_universe(usable)
+            log.info("ボラ急変銘柄: 本日判定済みの対象%d銘柄を使います %s", len(usable), usable)
+            return
+    except (OSError, ValueError):
+        pass
+
+    def run():
+        log.info("ボラ急変銘柄: 監視%d銘柄の日足で対象を判定しています（確定まで新規エントリーなし）",
+                 len(watched))
+        try:
+            passed, detail = volatility_screen.screen(watched, today, cfg, log=log)
+        except Exception:
+            log.exception("ボラ急変銘柄の判定に失敗しました（この戦略は本日エントリーしません）")
+            return
+        strat.set_universe(passed)
+        log.info("ボラ急変銘柄: 対象%d銘柄に確定 %s", len(passed), passed)
+        try:
+            os.makedirs(os.path.dirname(VOLATILE_UNIVERSE_FILE), exist_ok=True)
+            tmp = VOLATILE_UNIVERSE_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"computed_on": today,
+                           "criteria": dict(volatility_screen.DEFAULTS, **(cfg or {})),
+                           "symbols": passed,
+                           "features": {k: v for k, v in detail.items() if v}},
+                          f, ensure_ascii=False, indent=1)
+            os.replace(tmp, VOLATILE_UNIVERSE_FILE)
+        except OSError as e:
+            log.warning("ボラ急変銘柄の判定結果を保存できませんでした: %s", e)
+
+    threading.Thread(target=run, daemon=True, name="volatile-universe").start()
 
 
 def _load_liquid_universe(log) -> list:
@@ -320,6 +370,8 @@ class RunnerEngine:
         self._external = []
         self._external_lock = threading.Lock()
         self._last_price = {}       # symbol -> 直近に観測した現在値
+        # 当日の始値。「寄付き後に始値を下回ったか」を見る戦略（ボラ急変銘柄）が使う。
+        self._open_price = {}       # symbol -> 当日の始値（PUSHの OpeningPrice）
         # 当日VWAP。板とは別の角度から需給を見るため、PUSHのたびに積み上げる。
         # 検知ごとに持たせるとズレるので、エンジンが1つ持って全戦略へ配る。
         self.vwap = VwapTracker()
@@ -373,7 +425,8 @@ class RunnerEngine:
         af = strategies_cfg.get("accumulation_follow", {})
         vd = strategies_cfg.get("vwap_discount_reversal", {})
         lu = strategies_cfg.get("liquid_under_surge", {})
-        if any(c.get("enabled") for c in (ar, rk, cf, pr, pw, af, vd, lu)):
+        vp = strategies_cfg.get("volatile_panic_rebound", {})
+        if any(c.get("enabled") for c in (ar, rk, cf, pr, pw, af, vd, lu, vp)):
             ai_mod = load_detector_module("AIStrategys")
             if ar.get("enabled"):
                 self.ai_strategies["afternoon_reversal"] = ai_mod.AfternoonReversalStrategy(
@@ -460,6 +513,19 @@ class RunnerEngine:
                         take_profit_pct=lu.get("take_profit_pct"),  # 既定は利確なし＝大引け
                         min_entry_price=lu.get("min_entry_price", 500.0),
                     )
+            # ボラ急変銘柄 売り板消化反発: 入力は panic_sell_detector（DUMP/ABSORBED）。
+            # 対象銘柄は起動時に main() が日足で判定して set_universe() で確定する。
+            # 「始値を下回っているか」は、handle() がアラートに添える open_price で見る。
+            if vp.get("enabled"):
+                self.ai_strategies["volatile_panic_rebound"] =                     ai_mod.VolatilePanicReboundStrategy(
+                        entry_start=parse_time(vp.get("entry_start", "09:00")),
+                        entry_end=parse_time(vp.get("entry_end", "15:00")),
+                        stop_loss_pct=vp.get("stop_loss_pct", 1.0),
+                        take_profit_pct=vp.get("take_profit_pct", 3.0),
+                        min_entry_price=vp.get("min_entry_price", 0.0),
+                        stages=tuple(vp.get("stages", ["DUMP", "ABSORBED"])),
+                        max_open_dev_pct=vp.get("max_open_dev_pct", 0.0),
+                    )
 
     def submit_external(self, source: str, alert: dict) -> None:
         """PUSH以外の経路で出た検知アラートを受け取る（別スレッドから呼ばれる）。
@@ -499,6 +565,13 @@ class RunnerEngine:
         low_price = data.get("LowPrice")
         if current_price is not None:
             self._last_price[str(symbol)] = current_price
+        # 当日の始値。寄り前などに前日ぶんを掴まないよう、日付が今日のものだけ採る
+        # （OpeningPriceTime が無い場合は値そのものを信じる）。
+        opening = data.get("OpeningPrice")
+        if opening:
+            opening_time = str(data.get("OpeningPriceTime") or "")
+            if not opening_time or opening_time[:10] == now.strftime("%Y-%m-%d"):
+                self._open_price[str(symbol)] = opening
         self.vwap.update(symbol, current_price, trading_volume, now)
 
         # 注意: kabuステーションAPIは BidPrice=最良「売」気配 / AskPrice=最良「買」気配 と
@@ -556,6 +629,8 @@ class RunnerEngine:
                 if isinstance(_ba, dict) and _ba.get('symbol') is not None:
                     _ba['vwap_discount_pct'] = self.vwap.discount_pct(
                         _ba['symbol'], _ba.get('price'), now)
+                    # 寄付き後に始値を下回ったかを見る戦略（ボラ急変銘柄）のために添える
+                    _ba['open_price'] = self._open_price.get(str(_ba['symbol']))
             for name, strat in self.ai_strategies.items():
                 for alert in strat.on_price(symbol, current_price, now):
                     results.append((name, alert))
@@ -684,6 +759,12 @@ def main():
     client.unregister_all()
     reg_result = client.register_symbols(symbols)
     log.info("銘柄登録結果: %s", reg_result)
+
+    # ボラ急変銘柄 売り板消化反発の対象銘柄を確定する（前日までの日足・毎朝判定）
+    volatile_strat = engine.ai_strategies.get("volatile_panic_rebound")
+    if volatile_strat is not None:
+        vp_cfg = (config.get("strategies") or {}).get("volatile_panic_rebound") or {}
+        start_volatile_universe(volatile_strat, symbols, vp_cfg.get("universe") or {}, log)
 
     # 自動売買（strategies/autotrade）。無効なら None のまま＝仮想売買のみ
     built = build_autotrader(config, client, log)

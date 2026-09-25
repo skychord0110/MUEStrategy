@@ -60,13 +60,14 @@ STRATEGY_LABELS = {
     "accumulation_follow": "AI買い集め追随",
     "vwap_discount_reversal": "AI VWAP乖離反発",
     "liquid_under_surge": "ボラ高流動銘柄UNDER急増",
+    "volatile_panic_rebound": "ボラ急変銘柄 売り板消化反発",
 }
 
 # AIストラテジー（仮想売買）のストラテジー名
 AI_PAPER_STRATEGIES = ("afternoon_reversal", "afternoon_reversal_ranked",
                        "confluence", "panic_rebound", "panic_rebound_wide",
                        "accumulation_follow", "vwap_discount_reversal",
-                       "liquid_under_surge")
+                       "liquid_under_surge", "volatile_panic_rebound")
 
 PANIC_STAGE_LABELS = {
     "ABSORBED": "投げ売り吸収",

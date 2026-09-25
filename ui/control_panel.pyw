@@ -76,6 +76,8 @@ AI_STRATEGIES = [
      ("strategies", "vwap_discount_reversal")),
     ("ボラ高流動銘柄UNDER急増", "liquid_under_surge",
      ("strategies", "liquid_under_surge")),
+    ("ボラ急変銘柄 売り板消化反発", "volatile_panic_rebound",
+     ("strategies", "volatile_panic_rebound")),
 ]
 
 # 検知ストラテジーをONにしたとき、一緒にONにする仮想売買戦略。
@@ -83,7 +85,7 @@ AI_STRATEGIES = [
 # 検知にチェックを入れたら両方が動くようにする。片方だけにしたい場合は
 # AI仮想売買欄で個別に外せる。
 GROUPED_WITH_DETECTOR = {
-    "panic_sell_detector": ("panic_rebound", "panic_rebound_wide"),
+    "panic_sell_detector": ("panic_rebound", "panic_rebound_wide", "volatile_panic_rebound"),
     # 買い集め追随の入力は「定期買い集め z値」の検知。検知を切ると
     # シグナルが来ず戦略が沈黙するので、一緒に入れる。
     "periodic_buy_zscore": ("accumulation_follow",),
@@ -99,7 +101,8 @@ SUB_FROM = {
     "accumulation_follow": ("accumulation_follow",),
     "vwap_discount_reversal": ("vwap_discount_reversal",),
     "liquid_under_surge": ("liquid_under_surge",),
-    "panic_sell_detector": ("panic_rebound", "panic_rebound_wide"),
+    "volatile_panic_rebound": ("volatile_panic_rebound",),
+    "panic_sell_detector": ("panic_rebound", "panic_rebound_wide", "volatile_panic_rebound"),
     "periodic_buy_zscore": ("accumulation_follow",),
 }
 

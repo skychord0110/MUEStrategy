@@ -455,6 +455,89 @@ class PanicReboundStrategy:
         return [entry]
 
 
+class VolatilePanicReboundStrategy:
+    """ボラ急変銘柄の寄り後・売り板消化反発（仮想売買）。
+
+    対象: 起動時に set_universe() で確定した「ボラ急変銘柄」だけ。判定は前日までの
+          日足で行う（runner/src/volatility_screen.py）。
+            前日の売買代金1億円以上 かつ
+            (直近3日のうち1日でも±5%以上の急騰落 または 3日/20日の平均値幅≥1.5倍)
+    エントリー: 寄付き後に始値を下回っている局面で、上に指してあった売り板が
+            ・買い気配へぶつけられた   … 投げ売り検知 DUMP
+            ・売り気配に指し直されて食われた … 投げ売り検知 ABSORBED
+          のどちらかで消化されたとき（＝上値の供給が片付いて需給が改善した）に仮想買い。
+          同一銘柄は1日1回まで。
+    決済: 損切り-stop_loss_pct% / 利確+take_profit_pct% / 残りは大引け。
+
+    【根拠】2026-09-25のバックテスト（analysis/research_panic_volatile.py。
+      2026-07-29〜09-25の投げ売り検知をYahoo5分足で検証・先読みなし・往復0.15%控除）:
+        ボラ急変銘柄・寄り比0%以下・両方  n=17  利確+3%/損切り-1%  期待値+0.67%（勝率53%）
+                                                利確+2%/損切り-1%  期待値+0.44%（勝率59%）
+                                                大引け持ち切り      期待値-0.57%
+      ・**大引けまで持つと全パターンでマイナス**。反発は短命なので日中に決済する。
+      ・利確+3%は前半+1.06%・後半+0.33%と、どちらの期間も+2%と同等以上。+2%に届いた
+        8件のうち7件がそのまま+3%まで伸びており、利確件数をほぼ減らさずに1回の利益が増える。
+      ・「始値を下回っている」だけで期待値が改善する。-1%・-2%と深い下落を
+        条件にすると悪化したので、しきい値は0%にしている。
+
+    【重要・実弾に使ってはいけない理由】
+      絞り込み後はn=17・10銘柄（上位3で59%）しかない。絞り込みの外と比べると、損切り-1%
+      の決済では差が出る（+3%/-1%で +0.67% 対 -0.00%）が、利確+2%/損切り-2%では差が
+      なかった（+0.18% 対 +0.17%）。絞り込みなしの panic_rebound（AI投げ売り反発）と
+      フォワードで比べて、条件の効き目を確かめること。
+    """
+
+    def __init__(self, entry_start: dtime = dtime(9, 0), entry_end: dtime = dtime(15, 0),
+                 stop_loss_pct: float = 1.0, take_profit_pct: float = 3.0,
+                 min_entry_price: float = 0.0, stages: tuple = ("DUMP", "ABSORBED"),
+                 max_open_dev_pct: float = 0.0):
+        self.entry_start = entry_start
+        self.entry_end = entry_end
+        self.min_entry_price = min_entry_price
+        self.stages = tuple(stages)
+        self.max_open_dev_pct = max_open_dev_pct
+        self.book = PaperBook(stop_loss_pct, take_profit_pct)
+        self.universe = set()          # 起動時に set_universe() で確定する
+
+    def set_universe(self, symbols) -> None:
+        """対象銘柄を確定する。別スレッドから呼ばれても、集合の差し替えは原子的。"""
+        self.universe = {str(s) for s in (symbols or [])}
+
+    def on_price(self, symbol: str, price, msg_time) -> list:
+        alert = self.book.check_exit(symbol, price, msg_time)
+        return [alert] if alert else []
+
+    def on_signal(self, source: str, alert: dict, msg_time) -> list:
+        if source != "panic_sell_detector":
+            return []
+        stage = alert.get("stage")
+        if stage not in self.stages:
+            return []
+        symbol = str(alert.get("symbol"))
+        # 対象外、または対象がまだ確定していない（空）なら入らない（安全側）
+        if symbol not in self.universe:
+            return []
+        if not _in_window(msg_time, self.entry_start, self.entry_end):
+            return []
+        price = alert.get("price")
+        if price is None or price < self.min_entry_price:
+            return []
+        # 寄付き後の下落: 始値を下回っていること。始値が取れないときは判定できない
+        # ので入らない（無条件に入ると条件の意味がなくなる）。
+        open_price = alert.get("open_price")
+        if not open_price:
+            return []
+        open_dev = (float(price) / float(open_price) - 1) * 100
+        if open_dev > self.max_open_dev_pct:
+            return []
+        if not self.book.can_enter(symbol, msg_time):
+            return []
+        entry = self.book.enter(symbol, price, msg_time)
+        entry["trigger"] = "投げ売り吸収" if stage == "ABSORBED" else "投げ売り"
+        entry["open_dev_pct"] = open_dev
+        return [entry]
+
+
 class AccumulationFollowStrategy:
     """定期買い集め追随戦略（仮想売買）。
 
