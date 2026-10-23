@@ -284,7 +284,7 @@ strategies:
     # 期待値マイナス（STRONG 28件・WATCH 435件）。フィルタとして働かず、
     # 良いシグナルを削っているだけと判断した。
     # 根拠: analysis/output/2026-08-29/analysis_result_2026-08-29.md
-    enabled: false
+    enabled: true
     window_seconds: 1800   # UNDER急増と小口売り連続がこの秒数以内に両方揃ったら発火
     entry_start: "13:00"
     entry_end: "15:00"

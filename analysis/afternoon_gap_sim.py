@@ -22,6 +22,8 @@
 
 使い方:
   python analysis/afternoon_gap_sim.py --date 2026-09-03 --outage-from 13:05
+  終日止まっていた日（例 2026-10-14）:
+  python analysis/afternoon_gap_sim.py --date 2026-10-14 --outage-from 09:00       --emit-log --note "ランナーが場中に未稼働(09:00〜大引け)"
   株価は取得済みなら再利用。--refetch で取り直し、--no-fetch でオフライン。
 """
 import argparse
@@ -57,9 +59,17 @@ def load_cfg():
     return c
 
 
-def fetch_bars(sym):
+def fetch_bars(sym, date):
+    """指定日（YYYY-MM-DD）の5分足だけを返す。
+
+    以前は range=1d（直近の営業日）で取っていたため、翌日の場中に実行すると
+    別の日の株価で推計してしまう恐れがあった。期間を指定して取り、日付で照合する。
+    """
+    d0 = datetime.datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=JST)
+    p1 = int(d0.timestamp())
+    p2 = int((d0 + datetime.timedelta(days=1)).timestamp())
     url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}.T"
-           f"?range=1d&interval=5m")
+           f"?period1={p1}&period2={p2}&interval=5m")
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=25) as resp:
         d = json.load(resp)
@@ -73,6 +83,8 @@ def fetch_bars(sym):
         if None in (o, h, l, c):
             continue
         dt = datetime.datetime.fromtimestamp(t, JST)
+        if dt.strftime("%Y-%m-%d") != date:      # 指定日以外の足は混ぜない
+            continue
         rows.append({"time": dt.strftime("%H:%M"), "o": o, "h": h,
                      "l": l, "c": c, "v": v or 0})
     return rows
@@ -87,7 +99,7 @@ def get_all_bars(symbols, date, refetch, no_fetch, outdir):
     bars = {}
     for s in symbols:
         try:
-            bars[s] = fetch_bars(s)
+            bars[s] = fetch_bars(s, date)
         except Exception as e:
             print(f"  取得失敗 {s}: {type(e).__name__} {str(e)[:80]}")
             bars[s] = []
@@ -258,15 +270,16 @@ IF_TRIGGER = {
 }
 
 
-def _build_if_lines(results, date, outage_from):
+def _build_if_lines(results, date, outage_from, note=None):
     """週次集計(weekly_report.py)が拾う仮想売買行を生成して返す。
 
     - 形式は notifier.py の実出力に一致（RE_ENTRY / RE_EXIT でパースされる）。
     - 実約定と区別できるよう、全トレード行のトリガーに [IF補完] を付与し、
       前後に # 注記ブロックを挟む（# 行はタイムスタンプ無しのため集計対象外）。
     """
+    what = note or f"接続断で欠損した午後({outage_from}〜大引け)"
     lines = [
-        f"# ==== ここから 接続断で欠損した午後({outage_from}〜大引け) の "
+        f"# ==== ここから {what} の "
         f"『もし稼働していたら』if推計（実約定ではない） ====",
         "# 板シグナルは復元不能のため、安値圏タッチを板トリガーの価格代理として推計。",
         "# 全トレード行のトリガーに [IF補完] を付与。往復コストは週次側で控除。",
@@ -285,7 +298,7 @@ def _build_if_lines(results, date, outage_from):
             lines.append(
                 f"{date} {et} [INFO] [{disp}/エントリー] {sym} {sym}: "
                 f"{trig} を検知、{t['entry']:.1f}円で仮想買い"
-                f"（if補完・接続断の推計・発注なし）")
+                f"（if補完・runner未稼働時間帯の推計・発注なし）")
             lines.append(
                 f"{date} {xt} [INFO] [{disp}/決済:{t['reason']}] {sym} {sym}: "
                 f"仮想決済 {t['entry']:.1f}円→{t['exit']:.1f}円 "
@@ -295,7 +308,7 @@ def _build_if_lines(results, date, outage_from):
     return lines, n
 
 
-def emit_runner_log(results, date, outage_from):
+def emit_runner_log(results, date, outage_from, note=None):
     """if推計トレードを日次の runner_<date>.log に直接追記する。
 
     稼働中プロセスが同じファイルに書き続けている可能性があるため、O_APPEND
@@ -308,7 +321,7 @@ def emit_runner_log(results, date, outage_from):
         with open(path, encoding="utf-8", errors="replace") as f:
             if "[IF補完]" in f.read():
                 return path, 0  # 追記済み。重複を避ける
-    lines, n = _build_if_lines(results, date, outage_from)
+    lines, n = _build_if_lines(results, date, outage_from, note)
     blob = ("\r\n".join(lines) + "\r\n").encode("utf-8")
     with open(path, "ab") as f:      # 'a' = O_APPEND。末尾追記のみ
         f.write(blob)
@@ -333,7 +346,9 @@ def main():
     ap.add_argument("--refetch", action="store_true")
     ap.add_argument("--no-fetch", action="store_true")
     ap.add_argument("--emit-log", action="store_true",
-                    help="週次集計が拾う runner_<date>_if_afternoon.log を書き出す")
+                    help="週次集計が拾う if補完トレードを runner_<date>.log に追記する")
+    ap.add_argument("--note", default=None,
+                    help="追記ブロックの見出しに書く状況説明（例: ランナー未稼働(終日)）")
     a = ap.parse_args()
 
     outdir = os.path.join(BASE, "analysis", "output", a.date)
@@ -396,7 +411,7 @@ def main():
     print(f"\n出力先: {outdir}")
 
     if a.emit_log:
-        lp, ln = emit_runner_log(results, a.date, a.outage_from)
+        lp, ln = emit_runner_log(results, a.date, a.outage_from, a.note)
         if ln == 0:
             print(f"\n本ログは既に [IF補完] を含むため追記スキップ: {lp}")
         else:

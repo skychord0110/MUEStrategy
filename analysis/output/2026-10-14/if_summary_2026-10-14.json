@@ -1,0 +1,37 @@
+{
+  "morning_under_total": 0,
+  "morning_entries": [],
+  "morning_exits": [],
+  "summary": {
+    "afternoon_reversal": {
+      "n": 20,
+      "win_pct": 20.0,
+      "avg_net": -0.87,
+      "reasons": {
+        "利確": 0,
+        "損切り": 5,
+        "大引け": 15
+      }
+    },
+    "afternoon_reversal_ranked": {
+      "n": 20,
+      "win_pct": 15.0,
+      "avg_net": -0.85,
+      "reasons": {
+        "利確": 0,
+        "損切り": 4,
+        "大引け": 16
+      }
+    },
+    "vwap_discount_reversal": {
+      "n": 7,
+      "win_pct": 0.0,
+      "avg_net": -1.71,
+      "reasons": {
+        "利確": 0,
+        "損切り": 4,
+        "大引け": 3
+      }
+    }
+  }
+}
