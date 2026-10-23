@@ -46,11 +46,46 @@ def _num(v):
         return None
 
 
+def pending_buy_amount(orders) -> tuple:
+    """未約定の現物買い注文が余力から差し引いている金額を見積もる。
+
+    返り値: (金額, 金額を出せなかった成行注文の件数)
+
+    買い注文を出すと、約定前でも「指値 × 数量」が現物買付可能額から引かれる。
+    約定していない残り（OrderQty - CumQty）ぶんを余力に足し戻せば資産に戻る。
+    約定済みの部分は建玉の評価額に入るので、ここでは数えない。
+    （取消で解放される額を同じ式で見積もっている autotrade/src/trader.py と揃えている）
+
+    成行は /orders の Price が 0 で注文金額が分からないため、件数だけ返す。
+    State=5（終了）は全約定・取消済・失効などで、もう余力を拘束していない。
+    OrderQty は失効しても0にならない（仕様）ので、State で除外する。
+    """
+    amount = 0.0
+    market = 0
+    for o in orders or []:
+        if str(o.get("Side")) != "2" or o.get("State") == 5:
+            continue
+        remaining = (_num(o.get("OrderQty")) or 0.0) - (_num(o.get("CumQty")) or 0.0)
+        if remaining <= 0:
+            continue
+        price = _num(o.get("Price")) or 0.0
+        if price <= 0:
+            market += 1
+            continue
+        amount += price * remaining
+    return amount, market
+
+
 def build(client, product: str = None) -> dict:
     """買付余力と建玉を1回取得して、UIが表示しやすい形に整える。
 
     評価損益は /positions の追加情報（addinfo 既定 true）に含まれる
     ProfitLoss（評価損益額）・ProfitLossRate（評価損益率）をそのまま使う。
+
+    資産残高 = 買付余力 + 未約定の現物買い注文の金額 + 現物の評価額 + 信用の評価損益
+    APIに預り金や資産合計を返すフィールドが無いため、手元で組み立てる。
+    信用建玉の評価金額（Valuation）は建てた総額で、借りたぶんまで資産に数えてしまう
+    ので、信用は評価損益だけを足す。
     """
     snap = {
         "updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -59,22 +94,49 @@ def build(client, product: str = None) -> dict:
         "total_pl": None,
         "total_cost": None,
         "total_pl_rate": None,
+        "total_assets": None,
+        "pending_buy": None,
+        "pending_market_orders": 0,
+        "cash_valuation": None,
+        "margin_pl": None,
         "error": None,
     }
 
     wallet = client.get_wallet_cash()
     snap["buying_power"] = _num(wallet.get(BUYING_POWER_FIELD))
 
+    # 現物余力を拘束するのは現物の買い注文だけ（信用新規は信用の余力を使う）
+    pending, market = pending_buy_amount(client.get_orders(product="1"))   # 1=現物
+    snap["pending_buy"] = pending
+    snap["pending_market_orders"] = market
+
     positions = client.get_positions(product) or []
     total_pl = 0.0
     total_cost = 0.0
     have_pl = False
+    cash_valuation = 0.0
+    margin_pl = 0.0
+    assets_ok = True
     for p in positions:
         qty = _num(p.get("LeavesQty")) or 0.0
         if qty <= 0:
             continue                      # 返済済みの建玉は表示しない
         price = _num(p.get("Price"))
         pl = _num(p.get("ProfitLoss"))
+        # MarginTradeType は信用の場合のみ入る（仕様）。無ければ現物
+        if p.get("MarginTradeType") in (None, 0):
+            val = _num(p.get("Valuation"))
+            if val is None:
+                cur = _num(p.get("CurrentPrice"))
+                val = cur * qty if cur is not None else None
+            if val is None:
+                assets_ok = False
+            else:
+                cash_valuation += val
+        elif pl is None:
+            assets_ok = False
+        else:
+            margin_pl += pl
         snap["positions"].append({
             "symbol": str(p.get("Symbol") or ""),
             "name": p.get("SymbolName") or "",
@@ -98,6 +160,12 @@ def build(client, product: str = None) -> dict:
         # 建玉ごとの ProfitLossRate を平均すると金額の大きさを無視してしまうため使わない。
         if total_cost:
             snap["total_pl_rate"] = total_pl / total_cost * 100.0
+
+    # 一部でも値が取れない建玉があれば、少なく見えた合計を出さずに「—」にする
+    snap["cash_valuation"] = cash_valuation
+    snap["margin_pl"] = margin_pl
+    if assets_ok and snap["buying_power"] is not None:
+        snap["total_assets"] = snap["buying_power"] + pending + cash_valuation + margin_pl
     return snap
 
 
@@ -152,7 +220,7 @@ def clear(retries: int = WRITE_RETRIES) -> None:
 def start(client, cfg: dict, log, product: str = None) -> threading.Thread:
     """スナップショットの書き出しをバックグラウンドで開始する。
 
-    参照系2本（/wallet/cash と /positions）を interval 秒ごとに呼ぶだけなので
+    参照系3本（/wallet/cash・/orders・/positions）を interval 秒ごとに呼ぶだけなので
     レート制限には十分な余裕がある。失敗してもランナー本体は止めない。
 
     product は既定で未指定（=すべて）。以前は "2" を「現物」のつもりで
@@ -196,7 +264,8 @@ def start(client, cfg: dict, log, product: str = None) -> threading.Thread:
                 try:
                     write({"updated_at": datetime.now().isoformat(timespec="seconds"),
                            "buying_power": None, "positions": [], "total_pl": None,
-                           "total_cost": None, "total_pl_rate": None, "error": msg})
+                           "total_cost": None, "total_pl_rate": None,
+                           "total_assets": None, "error": msg})
                 except Exception:
                     pass
             time.sleep(interval)

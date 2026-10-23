@@ -7,13 +7,13 @@
   - 検知ストラテジー／AI仮想売買のON/OFF
   - 自動売買の enabled / dry_run の切り替え（確認付き）
   - ランナーの起動・停止・再起動
-  - 買付余力・建玉・評価損益の表示
+  - 資産残高・買付余力・建玉・評価損益の表示
 
 【口座情報の出どころ】
 このUIは kabuステーションAPI のトークンを一切発行しない。
 公式リファレンス POST /token に「別のトークンが新たに発行された時」に既存トークンが
 無効になると明記されており、UIが認証すると稼働中ランナーの発注が失敗しうるため。
-買付余力・建玉・評価損益は、ランナーが書き出す
+資産残高・買付余力・建玉・評価損益は、ランナーが書き出す
 strategies/runner/state/account.json を読んで表示している。
 （＝ランナー停止中は「—」になる。これは異常ではない）
 """
@@ -281,11 +281,11 @@ class ControlPanel:
                               font=FONTS["num"])
         self.clock.pack(side="right")
 
-    # ── 状態4分割 ──
+    # ── 状態5分割 ──
     def _build_status(self, parent):
         f = tk.Frame(parent, bg=PANEL)
         f.pack(fill="x")
-        for c in (0, 2, 4, 6):
+        for c in (0, 2, 4, 6, 8):
             f.columnconfigure(c, weight=1, uniform="status")
 
         def cell(col, title, bg=PANEL):
@@ -304,10 +304,13 @@ class ControlPanel:
         vsep(f).grid(row=0, column=1, sticky="ns")
         _, _, _, self.st_runner = cell(2, "ランナー")
         vsep(f).grid(row=0, column=3, sticky="ns")
-        _, _, _, self.st_power = cell(4, "買付余力")
-        self.st_power.configure(font=FONTS["num"])
+        _, _, self.assets_title, self.st_assets = cell(4, "資産残高")
+        self.st_assets.configure(font=FONTS["numb"])
         vsep(f).grid(row=0, column=5, sticky="ns")
-        self.pl_box, self.pl_pad, self.pl_title, self.st_pl = cell(6, "評価損益")
+        _, _, _, self.st_power = cell(6, "買付余力")
+        self.st_power.configure(font=FONTS["num"])
+        vsep(f).grid(row=0, column=7, sticky="ns")
+        self.pl_box, self.pl_pad, self.pl_title, self.st_pl = cell(8, "評価損益")
         self.st_pl.configure(font=FONTS["numb"])
 
     # ── 建玉 ──
@@ -1127,8 +1130,16 @@ class ControlPanel:
         self.hdr_dot.configure(
             fg=GREEN if running else (ORANGE if external else TEXT_MUTE))
 
-        # 買付余力・評価損益
+        # 資産残高・買付余力・評価損益
         acc = self.account or {}
+        assets = acc.get("total_assets")
+        self.st_assets.configure(text=yen(assets),
+                                 fg=TEXT if assets is not None else TEXT_MUTE)
+        # 成行の買い注文は注文金額が分からず合計に入っていないので、見出しで知らせる
+        market = acc.get("pending_market_orders") or 0
+        self.assets_title.configure(
+            text=f"資産残高（成行{market}件 未加算）" if market else "資産残高",
+            fg=ORANGE if market else TEXT_DIM)
         self.st_power.configure(text=yen(acc.get("buying_power")),
                                 fg=TEXT if acc.get("buying_power") is not None else TEXT_MUTE)
         pl = acc.get("total_pl")
