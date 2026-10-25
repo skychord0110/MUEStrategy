@@ -76,6 +76,29 @@ def pending_buy_amount(orders) -> tuple:
     return amount, market
 
 
+def order_rows(orders) -> list:
+    """/orders の応答を、スマホアプリが表示する分だけの形に絞る。
+
+    State=5（終了）も含めて返す（当日の約定・取消の確認に使うため）。
+    /orders は当日分を返す。成行は Price が 0 になるので None にする。
+    """
+    rows = []
+    for o in orders or []:
+        price = _num(o.get("Price"))
+        rows.append({
+            "id": str(o.get("ID") or ""),
+            "symbol": str(o.get("Symbol") or ""),
+            "name": o.get("SymbolName") or "",
+            "side": str(o.get("Side") or ""),          # 1=売 2=買
+            "state": o.get("State"),                   # 1=待機 2=処理中 3=処理済 4=訂正取消送信中 5=終了
+            "qty": _num(o.get("OrderQty")),
+            "filled": _num(o.get("CumQty")),
+            "price": price if price else None,
+            "recv_time": o.get("RecvTime"),
+        })
+    return rows
+
+
 def build(client, product: str = None) -> dict:
     """買付余力と建玉を1回取得して、UIが表示しやすい形に整える。
 
@@ -99,6 +122,7 @@ def build(client, product: str = None) -> dict:
         "pending_market_orders": 0,
         "cash_valuation": None,
         "margin_pl": None,
+        "orders": [],
         "error": None,
     }
 
@@ -106,7 +130,9 @@ def build(client, product: str = None) -> dict:
     snap["buying_power"] = _num(wallet.get(BUYING_POWER_FIELD))
 
     # 現物余力を拘束するのは現物の買い注文だけ（信用新規は信用の余力を使う）
-    pending, market = pending_buy_amount(client.get_orders(product="1"))   # 1=現物
+    orders = client.get_orders(product="1")   # 1=現物
+    pending, market = pending_buy_amount(orders)
+    snap["orders"] = order_rows(orders)
     snap["pending_buy"] = pending
     snap["pending_market_orders"] = market
 

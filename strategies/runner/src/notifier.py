@@ -8,6 +8,8 @@ import os
 import threading
 from datetime import datetime
 
+import events
+
 logger = logging.getLogger("runner")
 
 try:
@@ -259,6 +261,9 @@ def notify_message(title: str, body: str):
 def notify(strategy: str, alert: dict):
     title, body = build_message(strategy, alert)
     logger.info("%s %s", title, body)
+    if strategy in AI_PAPER_STRATEGIES:
+        # スマホアプリ向けに構造のまま残す（詳細: events.py）
+        events.record_paper(strategy, alert)
 
     if _plyer_notification is None:
         logger.warning("plyerが未インストールのためポップアップ通知はスキップします（pip install plyer）")
