@@ -15,6 +15,7 @@ MUEStrategy/
    ├─ config_io.py             config.yaml の真偽値だけを書き換える（コメント保持）
    ├─ symbols_update.py        最新CSV → symbols.yaml
    ├─ runner_control.py        ランナーの起動・停止と出力の取り込み
+   ├─ mobile_server.py         スマホアプリの中継サーバ（MUEStrategyApp）の起動
    ├─ make_sounds.py           約定音の生成
    ├─ sound_preview.py         約定音の試聴
    ├─ icon_candidates.py       アイコンの候補を描き出す（図柄の定義もここ）
@@ -259,3 +260,18 @@ ONにするときは、いまの `enabled` / `dry_run` の状態から**何が�
   ウィンドウが774pxしか取れず、そのままだと下端の操作行が見えなくなるため
 - 角丸・グラデーションは使っていない（Tkinterのウィジェットでは描けないため、
   区切りはすべて1pxの罫線）。アイコンフォントも使わない（環境により豆腐になるため）
+
+## スマホアプリの中継サーバ
+
+コントロールパネルを開くと、隣のフォルダの **MUEStrategyApp**（スマホアプリの中継サーバ）が
+自動で起動する（`mobile_server.py`）。結果はログ欄に `[スマホ中継]` で出る。
+
+- すでに動いていれば何もしない（二重には起動しない）
+- 窓は出さない。出力は `MUEStrategyApp/data/server.log`
+- **パネルを閉じても止まらない**（スマホから見続けられるように）。止めるときは
+  タスクマネージャーで該当の python.exe を終了する
+- MUEStrategyApp が無い・セットアップ前（`.venv` や `config.yaml` が無い）なら何もしない
+- 場所を変えたときは環境変数 `MUE_APP_DIR` に MUEStrategyApp のフォルダを指定する
+
+中継サーバはランナーが書き出すファイルを読むだけで、kabuステーションAPIは呼ばない。
+常駐で60MB前後。

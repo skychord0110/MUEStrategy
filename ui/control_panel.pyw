@@ -8,6 +8,7 @@
   - 自動売買の enabled / dry_run の切り替え（確認付き）
   - ランナーの起動・停止・再起動
   - 資産残高・買付余力・建玉・評価損益の表示
+  - スマホアプリの中継サーバ（MUEStrategyApp）の起動（パネルを開いたときに自動で）
 
 【口座情報の出どころ】
 このUIは kabuステーションAPI のトークンを一切発行しない。
@@ -35,6 +36,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 import config_io                                    # noqa: E402
+import mobile_server                                # noqa: E402
 import runner_control                               # noqa: E402
 import symbols_update                               # noqa: E402
 from theme import (BG, BORDER, BORDER_LT, FONTS, GREEN, GREEN_BG,   # noqa: E402
@@ -188,6 +190,21 @@ class ControlPanel:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._append_log("[コントロールパネル] 起動しました。"
                          "ランナーを動かす前に kabuステーション を起動してログインしてください")
+        self._start_mobile_server()
+
+    def _start_mobile_server(self):
+        """スマホアプリの中継サーバを立ち上げる（詳細: mobile_server.py）。
+
+        ポートの確認に最大0.5秒かかるので別スレッドで行い、結果はログ欄に出す。
+        失敗してもパネルやランナーには影響させない。
+        """
+        def work():
+            try:
+                _, msg = mobile_server.ensure_started(ROOT)
+            except Exception as e:
+                msg = f"起動処理でエラー: {type(e).__name__}: {e}"
+            self.log_queue.put(f"[スマホ中継] {msg}")
+        threading.Thread(target=work, daemon=True, name="mobile-server").start()
 
     # ══════════════════════════════════════════════════════════════
     # 画面の組み立て
