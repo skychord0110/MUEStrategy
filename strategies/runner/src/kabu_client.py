@@ -255,6 +255,21 @@ class KabuClient:
         """
         return self._get(f"/timeandsales/{symbol}@{exchange}", timeout=25)
 
+    def get_time_and_sales_raw(self, symbol: str, exchange: int = 1) -> bytes:
+        """歩み値の応答を、JSONに展開せずバイト列のまま返す。GET /timeandsales
+
+        中身は get_time_and_sales() と同じ（直近2営業日ぶんの全約定）。
+        流動性の高い銘柄では数MBになり、resp.json() で全件を辞書にすると
+        1回で数十MBを使う（2026-10-22 に MemoryError）。呼び出し側で当日分だけを
+        取り出せるよう、展開前の形で渡す。エラー応答の扱いは他の参照系と同じ。
+        """
+        path = f"/timeandsales/{symbol}@{exchange}"
+        with self._lock:
+            resp = requests.get(f"{self.base_url}{path}",
+                                headers=self._headers(), timeout=25)
+        self._check(resp, path)
+        return resp.content
+
     def get_orders(self, product: str = None, symbol: str = None,
                    order_id: str = None, state: str = None) -> list:
         """注文約定照会。GET /orders

@@ -11,6 +11,7 @@
 統合ランナーから自動起動される（kabuクライアントを受け取る必要があるため、
 単体実行はしない設計）。
 """
+import json
 import logging
 import os
 import time
@@ -18,7 +19,7 @@ from datetime import datetime, time as dtime
 
 import yaml
 
-from zscore_detector import ZScoreBuyDetector
+from zscore_detector import TodayTrades, ZScoreBuyDetector
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -68,10 +69,55 @@ _fetch_fail = {"streak": 0, "last_log": 0.0}
 _FAIL_LOG_INTERVAL = 300
 
 
-def fetch_today(client, symbol, exchange, today_iso, log):
-    """当日ぶんの歩み値を [(datetime, volume, price)] で返す。"""
+def parse_today(raw, today_iso, day=None) -> TodayTrades:
+    """歩み値の応答（バイト列）から、当日ぶんだけを TodayTrades に詰める。
+
+    応答は {"Symbol":..,"TradingPrice":[{"Time":..,"Volume":..,"Price":..}, ...]}。
+    json.loads の object_pairs_hook で約定1件ずつ受け取り、前日分はその場で捨て、
+    当日分は数値の配列に入れる。辞書や datetime を全件ぶん作らないので、
+    2営業日ぶんの応答でもメモリはほぼ応答の大きさで済む。
+    正規のJSONパーサを使うので、キーの順番や空白の有無には左右されない。
+
+    取り込み条件は以前の実装と同じ: Time と Price があり、日付が当日のもの。
+    時刻が読めない約定は飛ばす。
+    """
+    out = TodayTrades(day)
+
+    def hook(pairs):
+        t = v = p = None
+        is_trade = False
+        for k, x in pairs:
+            if k == "Time":
+                t, is_trade = x, True
+            elif k == "Volume":
+                v = x
+            elif k == "Price":
+                p = x
+        if not is_trade:
+            return dict(pairs)          # 応答の外側など、約定以外のオブジェクト
+        if not t or p is None:
+            return None
+        s = str(t)
+        if s[:10] != today_iso:
+            return None
+        try:
+            # "2026-08-10T15:30:00+09:00" の時・分・秒
+            sec = int(s[11:13]) * 3600 + int(s[14:16]) * 60 + int(s[17:19])
+            out.append(sec, v, p)
+        except (ValueError, TypeError):
+            pass
+        return None                     # 約定はリストに残さない
+
+    json.loads(raw, object_pairs_hook=hook)
+    return out
+
+
+def fetch_today(client, symbol, exchange, today_iso, log, day=None):
+    """当日ぶんの歩み値を TodayTrades で返す。取得に失敗したら None。"""
     try:
-        d = client.get_time_and_sales(symbol, exchange)
+        raw = client.get_time_and_sales_raw(symbol, exchange)
+        trades = parse_today(raw, today_iso, day)
+        del raw
     except Exception as e:
         # 例外の型名を必ず添える。str(e) が空の例外があり、
         # 2026-08-20 14:30 のログは「歩み値の取得に失敗 5707: 」と原因不明になった。
@@ -90,18 +136,7 @@ def fetch_today(client, symbol, exchange, today_iso, log):
         log.info("歩み値の取得が復旧しました（%d件連続で失敗していました）",
                  _fetch_fail["streak"])
         _fetch_fail["streak"] = 0
-    out = []
-    for r in d.get("TradingPrice") or []:
-        t = r.get("Time")
-        p = r.get("Price")
-        if not t or p is None or str(t)[:10] != today_iso:
-            continue
-        try:
-            out.append((datetime.fromisoformat(str(t)), r.get("Volume"), p))
-        except ValueError:
-            continue
-    out.sort(key=lambda x: x[0])
-    return out
+    return trades
 
 
 def run_loop(config_path, log=None, notify_fn=None, stop_event=None,
@@ -188,7 +223,8 @@ def run_loop(config_path, log=None, notify_fn=None, stop_event=None,
             if not in_session(datetime.now().astimezone().time()):
                 break
             t0 = time.time()
-            trades = fetch_today(kabu_client, sym, exch or exchange, today_iso, log)
+            trades = fetch_today(kabu_client, sym, exch or exchange, today_iso, log,
+                                 day=now.date())
             if trades:
                 try:
                     for a in det.update(sym, trades, now.date()):

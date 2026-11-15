@@ -19,11 +19,18 @@ API非依存の純ロジック。1日ぶんの歩み値を渡すと分析結果�
     10秒後のロットは112/121件が100株（判で押したように同じ）
     価格は 上昇86 / 同値22 / 下落13 で7割が買い上がり
     9:30時点で既に z=35.5（寄り付き30分で判定できる）
+
+【メモリの扱い（2026-11-16）】
+歩み値APIは2営業日ぶんの全約定を返すため、以前は毎回それを辞書のリストに展開し、
+当日分を datetime 付きのタプルに作り直していた。流動性の高い銘柄（1日6万約定）では
+1回でおよそ63MBを使い、稼働PCのメモリ不足時に MemoryError が出ていた
+（runner_2026-10-22.log）。いまは当日分だけを「その日0時からの秒数・数量・価格」の
+3本の数値配列（TodayTrades）に詰め、秒ごとの件数でラグを数える。判定結果は以前と同じ。
 """
 import statistics
-from collections import Counter, defaultdict
+from array import array
+from collections import Counter
 from dataclasses import dataclass, field
-from datetime import timedelta
 
 
 @dataclass
@@ -48,21 +55,76 @@ class Analysis:
         return (self.up + self.flat) / n if n else 0.0
 
 
+class TodayTrades:
+    """当日ぶんの約定を、数値の配列3本で持つ。
+
+      sec … その日0時からの秒数（約定時刻。歩み値APIの時刻は秒単位）
+      vol … 数量（APIが null を返した約定は NaN）
+      px  … 価格
+
+    1件あたり20バイト程度で済む（辞書＋datetime だと数百バイト）。
+    追加した順に持ち、分析のときに時刻順へ並べ直す。
+    """
+
+    __slots__ = ("day", "sec", "vol", "px")
+
+    def __init__(self, day=None):
+        self.day = day
+        self.sec = array("l")
+        self.vol = array("d")
+        self.px = array("d")
+
+    def append(self, sec, volume, price) -> None:
+        self.sec.append(int(sec))
+        self.vol.append(float("nan") if volume is None else float(volume))
+        self.px.append(float(price))
+
+    def __len__(self):
+        return len(self.sec)
+
+    @classmethod
+    def from_datetimes(cls, trades, day=None):
+        """[(datetime, volume, price), ...] から作る（テスト・手元検証用）。"""
+        tt = cls(day)
+        for t, v, p in trades:
+            tt.append(t.hour * 3600 + t.minute * 60 + t.second, v, p)
+        return tt
+
+
 def analyze(symbol, trades, delay_seconds=10, lag_min=6, lag_max=14,
             min_trades=50, min_pairs=20) -> Analysis:
-    """trades: [(datetime, volume, price), ...]（当日ぶん・時刻順）を分析する。
+    """当日ぶんの約定を分析する。
 
+    trades: TodayTrades（通常）か、[(datetime, volume, price), ...]（同じ日の分）。
     歩み値APIは毎回その日の全件を返すため、差分管理は不要で毎回この関数を呼べばよい。
+
+    ラグLのペア数は「各約定 t について、t+L 秒に起きた約定の数」の合計。
+    これは Σ_s 件数[s] × 件数[s+L] と等しいので、秒ごとの件数だけで数えられる。
     """
-    a = Analysis(symbol=str(symbol), trades=len(trades))
-    if len(trades) < min_trades:
-        a.reason = f"約定が少なすぎる（{len(trades)}件 < {min_trades}件）"
+    if not isinstance(trades, TodayTrades):
+        trades = TodayTrades.from_datetimes(trades)
+    n = len(trades)
+    a = Analysis(symbol=str(symbol), trades=n)
+    if n < min_trades:
+        a.reason = f"約定が少なすぎる（{n}件 < {min_trades}件）"
         return a
 
-    # 時刻 -> その秒に起きた約定のリスト
-    idx = defaultdict(list)
-    for t, v, p in trades:
-        idx[t].append((v, p))
+    # 時刻順に並べる（安定ソートなので同じ秒の中はAPIが返した順のまま）
+    order = sorted(range(n), key=trades.sec.__getitem__)
+    sec = array("l", (trades.sec[i] for i in order))
+    vol = array("d", (trades.vol[i] for i in order))
+    px = array("d", (trades.px[i] for i in order))
+    del order
+
+    # 秒 -> その秒の約定が並ぶ添字の範囲 [開始, 終了)
+    span = {}
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and sec[j] == sec[i]:
+            j += 1
+        span[sec[i]] = (i, j)
+        i = j
 
     lags = [L for L in range(int(lag_min), int(lag_max) + 1)]
     if int(delay_seconds) not in lags:
@@ -71,10 +133,11 @@ def analyze(symbol, trades, delay_seconds=10, lag_min=6, lag_max=14,
 
     counts = {}
     for L in lags:
-        dl = timedelta(seconds=L)
         c = 0
-        for t, v, p in trades:
-            c += len(idx.get(t + dl, ()))
+        for s, (b, e) in span.items():
+            r = span.get(s + L)
+            if r is not None:
+                c += (e - b) * (r[1] - r[0])
         counts[L] = c
     a.lag_counts = counts
 
@@ -93,11 +156,16 @@ def analyze(symbol, trades, delay_seconds=10, lag_min=6, lag_max=14,
         return a
 
     # 目標ラグのペアについて、10秒後側のロットと値動きを集計する
-    dl = timedelta(seconds=target)
     lots = Counter()
-    for t, v, p in trades:
-        for v2, p2 in idx.get(t + dl, ()):
-            lots[v2] += 1
+    for k in range(n):
+        r = span.get(sec[k] + target)
+        if r is None:
+            continue
+        p = px[k]
+        for m in range(r[0], r[1]):
+            v2 = vol[m]
+            lots[None if v2 != v2 else v2] += 1      # NaN（数量なし）は None として数える
+            p2 = px[m]
             if p2 > p:
                 a.up += 1
             elif p2 == p:
@@ -138,9 +206,12 @@ class ZScoreBuyDetector:
             self.last = {}
 
     def update(self, symbol, trades, day=None) -> list:
-        """当日ぶんの歩み値を渡して判定する。発火したアラートのリストを返す。"""
+        """当日ぶんの歩み値を渡して判定する。発火したアラートのリストを返す。
+
+        trades は TodayTrades か [(datetime, volume, price), ...]。
+        """
         if day is None and trades:
-            day = trades[-1][0].date()
+            day = trades.day if isinstance(trades, TodayTrades) else trades[-1][0].date()
         self._roll_day(day)
 
         a = analyze(symbol, trades, self.delay_seconds, self.lag_min, self.lag_max,
